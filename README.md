@@ -297,7 +297,7 @@ voices.py         音色列表与试听
 stop.py           一键关闭（stop.bat / stop-all.bat 背后的实现）
 tools/            换行符规整、提交前敏感信息扫描
 .githooks/        pre-commit 钩子（挡住密钥被提交）
-assets/pet.png    抠好透明通道的形象（其余原图不入库）
+assets/pet.png    抠好透明通道的形象（pet_src.jpg 是原图，留着方便重新抠）
 settings.json     配置页生成的本地配置（不入库）
 ```
 
