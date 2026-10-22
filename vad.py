@@ -16,7 +16,7 @@ import threading
 _GAIN_AT_MIN = 4.5
 _GAIN_AT_MAX = 1.6
 
-MIN_THRESHOLD = 0.0030   # 再低就会被麦克风本底噪声触发
+MIN_THRESHOLD = 0.0015   # 再低就会被麦克风本底噪声触发；太高则离麦克风稍远就听不到
 INITIAL_FLOOR = 0.0035
 
 

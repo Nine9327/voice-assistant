@@ -1,11 +1,11 @@
 """一键关闭语音助手。
 
     python stop.py              关掉助手进程（会问要不要顺便关 Ollama）
-    python stop.py --all        助手 + Ollama 全关，彻底释放显存
+    python stop.py --all        助手 + 桌面形象 + Ollama 全关，彻底释放显存
     python stop.py --keep-ollama  只关助手，不动 Ollama，不问
     python stop.py --dry        只列出会被关掉的进程，不动手
 
-只结束命令行里带本项目路径的 python 进程，不会误伤你别的 Python 程序。
+只结束命令行里带本项目特征的 python / pythonw 进程，不会误伤你别的 Python 程序。
 """
 from __future__ import annotations
 
@@ -19,6 +19,14 @@ from rich.console import Console
 
 PROJECT = Path(__file__).resolve().parent
 console = Console()
+
+# 两个进程都自己写了 pid 文件，这是最准的线索
+PID_FILES = {
+    "assistant.pid": "助手",
+    "pet.pid": "桌面形象",
+}
+# 关完之后这些都得清掉，否则下次启动会以为旧进程还在
+RUNTIME_FILES = ("assistant.pid", "pet.pid", "server.json")
 
 
 def _powershell(script: str) -> str:
@@ -44,27 +52,33 @@ def _process_name(pid: int) -> str:
     return _powershell(script).strip()
 
 
-def find_assistant_processes() -> list[tuple[int, str]]:
+def find_project_processes() -> list[tuple[int, str]]:
     """先读 pid 文件，再扫命令行兜底。
 
-    run.bat 里启动命令是相对路径 `assistant.py`，扫不到项目绝对路径，
-    所以命令行匹配放宽到「包含 voice-assistant 字样」——这既是项目名也是专属 conda 环境名。
+    两个进程的启动命令都是相对路径（assistant.py / pet.py），扫不到项目绝对路径，
+    所以按脚本名匹配；它们又都跑在本项目的 conda 环境里，命令行里通常还带
+    voice-assistant 字样，两个条件取并集，漏杀和误杀的几率都低。
     """
     found: dict[int, str] = {}
 
-    pid_file = PROJECT / ".runtime" / "assistant.pid"
-    if pid_file.exists():
+    for name, label in PID_FILES.items():
+        pid_file = PROJECT / ".runtime" / name
+        if not pid_file.exists():
+            continue
         try:
-            pid = int(pid_file.read_text(encoding="utf-8").strip())
-            if pid != os.getpid() and _process_name(pid).lower().startswith("python"):
-                found[pid] = "（来自 .runtime/assistant.pid）"
+            pid = int(pid_file.read_text(encoding="utf-8").strip() or 0)
         except (OSError, ValueError):
-            pass
+            continue
+        if pid and pid != os.getpid() and _process_name(pid).lower().startswith("python"):
+            found[pid] = f"（{label}，来自 .runtime/{name}）"
 
     script = (
         "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | "
-        "Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('voice-assistant') } | "
-        "ForEach-Object { [string]$_.ProcessId + '|' + $_.CommandLine }"
+        "Where-Object { $_.CommandLine -and ("
+        "$_.CommandLine.ToLower().Contains('voice-assistant') -or "
+        "$_.CommandLine.ToLower().Contains('assistant.py') -or "
+        "$_.CommandLine.ToLower().Contains('pet.py')"
+        ") } | ForEach-Object { [string]$_.ProcessId + '|' + $_.CommandLine }"
     )
     for line in _powershell(script).splitlines():
         line = line.strip()
@@ -80,6 +94,20 @@ def find_assistant_processes() -> list[tuple[int, str]]:
         found.setdefault(pid, cmdline.strip())
 
     return sorted(found.items())
+
+
+def clear_runtime() -> list[str]:
+    """删掉 .runtime 里的 pid 与端口记录，避免下次启动被旧状态绊住。"""
+    removed: list[str] = []
+    for name in RUNTIME_FILES:
+        path = PROJECT / ".runtime" / name
+        try:
+            if path.exists():
+                path.unlink()
+                removed.append(name)
+        except OSError:
+            continue
+    return removed
 
 
 def find_ollama_processes() -> list[tuple[int, str]]:
@@ -134,11 +162,13 @@ def main() -> None:
     parser.add_argument("--dry", action="store_true", help="只列出，不实际关闭")
     args = parser.parse_args()
 
-    assistants = find_assistant_processes()
+    assistants = find_project_processes()
     if not assistants:
         console.print("[dim]没有正在运行的助手进程[/dim]")
+        if not args.dry:
+            clear_runtime()
     else:
-        console.print(f"找到 [bold]{len(assistants)}[/bold] 个助手进程：")
+        console.print(f"找到 [bold]{len(assistants)}[/bold] 个进程：")
         for pid, cmdline in assistants:
             short = cmdline[:90] + ("…" if len(cmdline) > 90 else "")
             console.print(f"  [yellow]PID {pid}[/yellow]  {short}")
@@ -148,7 +178,10 @@ def main() -> None:
             return
 
         ok = sum(1 for pid, _ in assistants if kill(pid))
-        console.print(f"[green]已结束 {ok} 个助手进程[/green]")
+        console.print(f"[green]已结束 {ok} 个进程（助手 / 桌面形象 / 配置页）[/green]")
+        removed = clear_runtime()
+        if removed:
+            console.print(f"[dim]已清理：{', '.join(removed)}[/dim]")
 
     if args.dry:
         return

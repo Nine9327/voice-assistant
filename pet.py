@@ -143,6 +143,7 @@ def build_window(qt, server_ref: dict, on_quit):
             self._bubble = ""
             self._bubble_h = 0
             self._status = "offline"
+            self._offline_hits = 0
             self._phase = 0.0
             self._press_pos = None
             self._drag_offset = None
@@ -221,7 +222,12 @@ def build_window(qt, server_ref: dict, on_quit):
             self._status = data.get("status") or "idle"
             bubble = (data.get("bubble") or "").strip()
             if data.get("status") == "offline":
-                bubble = "没有连接到助手进程"
+                # 悬浮窗常常比助手先起来（模型要加载好几秒），
+                # 一上来就说「没连上」会让人以为出错了，先给个缓冲
+                self._offline_hits += 1
+                bubble = "启动中…" if self._offline_hits <= 8 else "没有连接到助手进程"
+            else:
+                self._offline_hits = 0
             self._set_bubble(bubble)
             self.update()
 

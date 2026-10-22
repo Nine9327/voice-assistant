@@ -18,11 +18,20 @@ import re
 import threading
 import time
 
+import numpy as np
+
 import config
 import vad
 
 # 保留中文、英文、数字；标点、空格、表情全部丢掉再比对
 _NOISE = re.compile(r"[^\u4e00-\u9fff\u3040-\u30ffA-Za-z0-9]+")
+
+# 语音片段的能量门槛：95 分位数幅度低于它就当没说话。
+# 跟着灵敏度反向走 —— 灵敏度拉满时放宽，宁可多转一次也别漏掉唤醒。
+# 定这两个数的依据：安静房间里 whisper 编造整句话的片段峰值约 0.002~0.003，
+# 而小声说话（含扬声器外放的合成音）也有 0.006 以上，门槛落在中间。
+_PEAK_AT_MIN = 0.008
+_PEAK_AT_MAX = 0.0015
 
 
 def normalize(text: str) -> str:
@@ -137,6 +146,7 @@ class Waker(threading.Thread):
 
         self.last_heard = ""
         self.last_at = 0.0
+        self.last_peak = 0.0
         self.hits = 0
         self.state = "off"          # off / listening / error
         self.last_error = ""
@@ -175,7 +185,15 @@ class Waker(threading.Thread):
             "hits": self.hits,
             "error": self.last_error,
             "threshold": round(self.segmenter.threshold, 5),
+            "peak": round(self.last_peak, 4),
+            "min_peak": round(self.min_peak, 4),
         }
+
+    @property
+    def min_peak(self) -> float:
+        """当前灵敏度下的语音能量门槛。"""
+        k = min(1.0, max(0.0, self.segmenter.sensitivity))
+        return _PEAK_AT_MIN + k * (_PEAK_AT_MAX - _PEAK_AT_MIN)
 
     # ---------------- 线程主体 ----------------
     def run(self) -> None:
@@ -210,9 +228,17 @@ class Waker(threading.Thread):
             if event is None or event[0] != "end":
                 continue
             _, start_t, end_t = event
-            duration = min(9.0, max(1.0, end_t - start_t + 0.35))
+            # 多截一点：断句可能起步偏晚（麦克风增益低时前几个字压不过阈值），
+            # 而 read_recent 是从末尾往回取，多给的时长正好补在句首
+            duration = min(10.0, max(1.2, end_t - start_t + 0.9))
             audio = self.recorder.read_recent(duration)
             if audio.size < config.SAMPLE_RATE * 0.4:
+                continue
+            # 近乎静音的片段直接扔掉：whisper 在静音上会凭空编出一整句中文，
+            # 白白烧掉 150ms 显卡，还会让配置页的「最近听到」变成乱码现场。
+            # 用 95 分位数而不是均值 —— 片段尾部总带着静音，均值会被稀释。
+            self.last_peak = float(np.percentile(np.abs(audio), 95))
+            if self.last_peak < self.min_peak:
                 continue
             self._check(audio)
 

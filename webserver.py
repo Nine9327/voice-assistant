@@ -200,8 +200,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_index()
         elif path == "/api/state":
             self._json(self.app.state())
+        elif path == "/api/live":
+            # 只回运行状态，不打显卡、不查模型列表 —— 页面可以每两秒轮询
+            self._json({"runtime": self.app.live_state()})
         elif path == "/api/models":
             self._handle_models(query)
+        elif path == "/api/wake/test":
+            self._handle_wake_test(query)
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -227,6 +232,31 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "models": models})
         except llm.LLMError as exc:
             self._json({"ok": False, "models": [], "error": str(exc)})
+
+    def _handle_wake_test(self, query: dict) -> None:
+        """拿一句话去比对提示词，验证模糊匹配到底认不认。
+
+        唤醒率是这个方案最玄的一环（whisper 常把「小蓝」听成「小兰」），
+        页面上能直接验证，比反复对着麦克风试快得多。
+        """
+        text = (query.get("text") or [""])[0]
+        phrase = (query.get("phrase") or [config.WAKE_PHRASE])[0] or config.WAKE_PHRASE
+        try:
+            import wake
+
+            hit, rest = wake.match(text, phrase)
+        except Exception as exc:  # noqa: BLE001
+            self._error(f"比对失败：{exc}", 500)
+            return
+        self._json(
+            {
+                "ok": True,
+                "hit": hit,
+                "rest": rest.strip(),
+                "phrase": phrase,
+                "text": text,
+            }
+        )
 
     # ---------------- POST ----------------
     def do_POST(self) -> None:
@@ -306,6 +336,15 @@ class _Handler(BaseHTTPRequestHandler):
         needs_restart = [k for k in changed if settings_store.SCHEMA[k].get("restart")]
         asr_result = self._maybe_reload_asr(changed, asr_snapshot)
 
+        # 唤醒开关 / 提示词改了要立刻生效：主循环正卡在等触发，
+        # 不主动叫它一声的话，得等下一轮对话结束才会重新读配置
+        wake_result = None
+        if self.app.on_config_changed is not None:
+            try:
+                wake_result = self.app.on_config_changed(changed)
+            except Exception as exc:  # noqa: BLE001
+                wake_result = {"error": f"{type(exc).__name__}: {exc}"}
+
         _cache.pop("llm_status", None)  # 服务地址/模型变了，状态必须重查
         self._json(
             {
@@ -313,6 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "changed": changed,
                 "needs_restart": needs_restart,
                 "asr": asr_result,
+                "wake": wake_result,
                 "config": settings_store.snapshot(config),
             }
         )
@@ -399,6 +439,7 @@ class ConfigServer:
         get_runtime=None,
         on_trigger=None,
         on_quit=None,
+        on_config_changed=None,
     ) -> None:
         self.host = host or config.WEB_HOST
         self.port = int(port or config.WEB_PORT)
@@ -406,6 +447,7 @@ class ConfigServer:
         self.get_runtime = get_runtime
         self.on_trigger = on_trigger
         self.on_quit = on_quit
+        self.on_config_changed = on_config_changed
         self._httpd: _Server | None = None
         self._thread: threading.Thread | None = None
         self._started_at = time.time()
@@ -465,6 +507,20 @@ class ConfigServer:
             pass
 
     # ---------------- 状态汇总 ----------------
+    def live_state(self) -> dict:
+        """轻量运行状态：不查显卡、不查模型列表，页面可以每两秒轮询。"""
+        out: dict = {
+            "pid": os.getpid(),
+            "port": self.port,
+            "uptime": round(time.time() - self._started_at),
+        }
+        if self.get_runtime is not None:
+            try:
+                out.update(self.get_runtime() or {})
+            except Exception as exc:  # noqa: BLE001
+                out["error"] = f"运行状态读取失败：{exc}"
+        return out
+
     def state(self) -> dict:
         runtime = {
             "pid": os.getpid(),

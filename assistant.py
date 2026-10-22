@@ -440,7 +440,8 @@ def _service_summary() -> str:
     return f"模型 {model} · 识别 {asr_name} · 合成 {tts_name}"
 
 
-def start_web(bridge: RuntimeBridge, port: int | None, on_trigger=None, on_quit=None):
+def start_web(bridge: RuntimeBridge, port: int | None, on_trigger=None, on_quit=None,
+              on_config_changed=None):
     """起配置页服务。失败不致命 —— 语音功能照常可用。"""
     try:
         from webserver import ConfigServer
@@ -454,6 +455,7 @@ def start_web(bridge: RuntimeBridge, port: int | None, on_trigger=None, on_quit=
         get_runtime=bridge.info,
         on_trigger=on_trigger,
         on_quit=on_quit,
+        on_config_changed=on_config_changed,
     )
     try:
         server.start()
@@ -515,11 +517,22 @@ def main() -> None:
     bridge.live = live
     bus = TriggerBus()
 
+    # 唤醒线程要在配置页启动之前就先占好名字：配置页可能比模型先就绪
+    waker = None
+
     def on_pet_trigger() -> dict:
-        """桌面悬浮窗被点击：等同于按了一次空格。"""
-        INTERRUPT.set()   # 正在说的话先停下
-        # 已经在录音时，点击的意思是「说完了」，不要再排一轮
-        if live.status != "listening":
+        """桌面悬浮窗被点击，按当前状态理解为不同的意思。
+
+        空闲 → 开一轮录音；正在说话 → 打断并开一轮录音；
+        正在录音 → 当成「我说完了」，让它立刻开始识别。
+        这里不能无脑置 INTERRUPT：空闲时置位会让录音循环立刻退出。
+        """
+        status = live.status
+        if status == "listening":
+            INTERRUPT.set()
+        else:
+            if status != "idle":
+                INTERRUPT.set()
             bus.push(TriggerBus.LISTEN)
         return {"ok": True}
 
@@ -527,9 +540,24 @@ def main() -> None:
         STOP.set()
         return {"ok": True}
 
+    def on_config_changed(changed: list[str]) -> dict | None:
+        """配置页保存后回调，把唤醒相关的开关立刻落到正在跑的线程上。
+
+        没有它的话，页面打开唤醒开关要等到「下一轮对话结束」才生效 ——
+        而用户正是在空闲时才去改这个设置，等于永远不生效。
+        """
+        if waker is None:
+            return {"state": "off", "enabled": False, "detail": "本次启动没加载唤醒线程"}
+        if not config.WAKE_ENABLED or not config.WAKE_PHRASE.strip():
+            waker.disable()
+        elif live.status == "idle":
+            # 说话当中不能开麦，否则自己的声音会把话筒塞满
+            waker.enable()
+        return waker.info()
+
     web = None
     if not args.no_web:
-        web = start_web(bridge, args.port, on_pet_trigger, on_quit)
+        web = start_web(bridge, args.port, on_pet_trigger, on_quit, on_config_changed)
         if web is not None:
             bridge.web = web
             console.print(
@@ -600,21 +628,23 @@ def main() -> None:
         else:
             bus.push(TriggerBus.LISTEN, heard=heard)
 
-    waker = None
-    if config.WAKE_ENABLED and not args.no_wake:
+    # 线程常驻，开关交给配置（enable() 自己会看 WAKE_ENABLED），
+    # 这样在配置页里随时开关都不需要重启；--no-wake 才是真的不加载
+    if not args.no_wake:
         waker = Waker(rec, asr, segmenter, on_wake)
         bridge.waker = waker
         waker.start()
-        console.print(f"[dim]唤醒词已就绪：说「{config.WAKE_PHRASE}」[/dim]")
-    else:
-        config.WAKE_ENABLED = False
+        if config.WAKE_ENABLED:
+            console.print(f"[dim]唤醒词已就绪：说「{config.WAKE_PHRASE}」[/dim]")
+        else:
+            console.print("[dim]唤醒监听当前是关的，可在配置页打开[/dim]")
 
     tips = "按住 [bold]空格[/bold] 或说[bold]唤醒词[/bold]，也可以点桌面上的形象"
     console.print(f"\n[bold green]就绪[/bold green]  {tips}，[bold]Ctrl+C[/bold] 退出\n")
 
     try:
         while not STOP.is_set():
-            live.update("idle", heard="", reply="")
+            live.update("idle")
             if waker is not None:
                 waker.enable()
             item = wait_for_trigger(hotkey, bus)
@@ -681,7 +711,9 @@ def main() -> None:
 
             if speaker is not None:
                 speaker.wait_done()
-            live.update("idle", heard="", reply="")
+            # 只切状态，保留 heard / reply：气泡在 idle 时本来就是空的，
+            # 但配置页和悬浮窗还能看到「上一轮说了什么」，排查问题时很有用
+            live.update("idle")
     except KeyboardInterrupt:
         console.print("\n[dim]再见[/dim]")
     finally:

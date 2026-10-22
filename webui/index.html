@@ -77,8 +77,12 @@
   .row > .shrink { flex: 0 0 auto; }
 
   .inline { display: flex; align-items: center; gap: 10px; }
-  .inline input[type=range] { flex: 1; accent-color: var(--accent); }
+  .inline input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
   .val { font-variant-numeric: tabular-nums; color: var(--text); min-width: 44px; text-align: right; font-size: 13px; }
+
+  .check { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; margin: 0; cursor: pointer; }
+  .check input[type=checkbox] { width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
+  .check span { color: var(--text); }
 
   button.act {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
@@ -286,6 +290,54 @@
       <div class="status" id="asr-status"></div>
     </section>
 
+    <!-- 唤醒与形象 -->
+    <section class="card">
+      <h2>唤醒与形象 <span class="badge" id="wake-badge">—</span></h2>
+      <p class="hint">说一句提示词就能开口，不用按空格。改完保存即刻生效，无需重启。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="WAKE_ENABLED">
+          <span>常开唤醒</span>
+        </label>
+        <div class="note" style="margin-top:10px">关掉后只能按住空格，或点一下桌面上的形象。开启时会常驻占用少量显卡（每说完一句转写一次）。</div>
+      </div>
+
+      <div class="field">
+        <label for="WAKE_PHRASE">唤醒提示词</label>
+        <input type="text" id="WAKE_PHRASE" placeholder="小蓝小蓝" maxlength="12">
+        <div class="note" id="wake-tip">建议 3~6 个字；叠词（小蓝小蓝）比单词更不容易被日常聊天误触发。</div>
+      </div>
+
+      <div class="field">
+        <label>灵敏度（越大越容易听出你在说话）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SENSITIVITY" min="0" max="1" step="0.05">
+          <span class="val" id="WAKE_SENSITIVITY-v">0.60</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>断句静音（说完后停顿多久算一句）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SILENCE" min="0.3" max="3" step="0.1">
+          <span class="val" id="WAKE_SILENCE-v">0.8s</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="wake-test-text">验证提示词：把一句话拿去比对</label>
+        <div class="row">
+          <input type="text" id="wake-test-text" placeholder="小兰小兰，现在几点了">
+          <button class="act shrink" id="btn-wake-test">比对</button>
+        </div>
+        <div class="status" id="wake-test-status"></div>
+      </div>
+
+      <div class="note" id="wake-live">监听状态：读取中…</div>
+      <div class="note">桌面形象是独立进程：双击 <code>start.vbs</code> 一起启动；右键点它可以打开本页或退出程序。</div>
+    </section>
+
     <!-- 交互 -->
     <section class="card">
       <h2>交互与页面</h2>
@@ -449,7 +501,7 @@ function renderState(data) {
   // 文本 / 数字输入
   ["OLLAMA_HOST", "OPENAI_BASE", "OPENAI_MODEL", "ASR_REMOTE_MODEL",
    "TTS_RATE", "TTS_PITCH", "TTS_VOLUME", "LLM_NUM_CTX", "MAX_HISTORY_TURNS",
-   "MIN_RECORD_SECONDS", "MAX_RECORD_SECONDS", "WEB_PORT"].forEach((k) => {
+   "MIN_RECORD_SECONDS", "MAX_RECORD_SECONDS", "WEB_PORT", "WAKE_PHRASE"].forEach((k) => {
     const el = $(k);
     if (el) el.value = c[k] ?? "";
   });
@@ -466,6 +518,15 @@ function renderState(data) {
 
   $("LLM_TEMPERATURE").value = c.LLM_TEMPERATURE ?? 0.7;
   $("LLM_TEMPERATURE-v").textContent = Number(c.LLM_TEMPERATURE ?? 0.7).toFixed(1);
+
+  // 唤醒
+  $("WAKE_ENABLED").checked = !!c.WAKE_ENABLED;
+  const sens = Number(c.WAKE_SENSITIVITY ?? 0.6);
+  $("WAKE_SENSITIVITY").value = sens;
+  $("WAKE_SENSITIVITY-v").textContent = sens.toFixed(2);
+  const silent = Number(c.WAKE_SILENCE ?? 0.8);
+  $("WAKE_SILENCE").value = silent;
+  $("WAKE_SILENCE-v").textContent = silent.toFixed(1) + "s";
 
   // 分段控件先按配置值初始化，再绘制
   segs().forEach((seg) => {
@@ -495,6 +556,10 @@ function renderState(data) {
   if (r.asr) {
     chips.push(`<span class="chip"><span class="dot ok"></span>识别 ${r.asr.device} / ${r.asr.compute_type}</span>`);
   }
+  if (r.wake) {
+    const on = r.wake.enabled && r.wake.state !== "off";
+    chips.push(`<span class="chip"><span class="dot ${on ? "ok" : ""}"></span>唤醒 ${on ? "监听中" : "已关闭"}</span>`);
+  }
   if (r.gpu && r.gpu.total) {
     chips.push(`<span class="chip">显存 ${r.gpu.used} / ${r.gpu.total} MiB</span>`);
   }
@@ -504,9 +569,40 @@ function renderState(data) {
   $("llm-badge").textContent = c.LLM_PROVIDER === "openai" ? "网络" : "本地";
   $("tts-badge").textContent = c.TTS_ENGINE === "sapi" ? "离线" : "在线";
   $("asr-badge").textContent = c.ASR_PROVIDER === "openai" ? "网络" : (r.asr ? r.asr.device : "本地");
+  $("wake-badge").textContent = c.WAKE_ENABLED ? "开" : "关";
+  renderLive(r);
   $("env-note").innerHTML = `配置文件：<code>${r.settings_file}</code>${r.settings_exists ? "" : "（保存后生成）"}`;
   $("llm-status").textContent = (r.llm && r.llm.detail) || "";
   $("llm-status").className = "status " + (llmOk ? "ok" : "bad");
+}
+
+const STATUS_NAME = { idle: "空闲", listening: "录音中", thinking: "思考中", speaking: "播报中" };
+const WAKE_NAME = { off: "未监听", listening: "监听中", triggered: "刚被唤醒", error: "出错" };
+
+function renderLive(r) {
+  const wake = r.wake || {};
+  const bits = [`助手 ${STATUS_NAME[r.status] || "未知"}`];
+  if (wake.state !== undefined) bits.push(`唤醒 ${WAKE_NAME[wake.state] || wake.state}`);
+  if (wake.phrase) bits.push(`提示词「${wake.phrase}」`);
+  if (wake.hits) bits.push(`已唤醒 ${wake.hits} 次`);
+  if (wake.last_heard) bits.push(`最近听到「${wake.last_heard}」`);
+  if (wake.peak) {
+    const low = wake.min_peak && wake.peak < wake.min_peak;
+    bits.push(`峰值 ${wake.peak}${wake.min_peak ? `（门槛 ${wake.min_peak}${low ? "，太轻被跳过" : ""}）` : ""}`);
+  }
+  if (wake.threshold) bits.push(`当前阈值 ${wake.threshold}`);
+  if (wake.detail) bits.push(wake.detail);
+  if (wake.error) bits.push("错误：" + wake.error);
+  $("wake-live").textContent = "监听状态：" + bits.join(" · ");
+}
+
+async function pollLive() {
+  try {
+    const data = await fetch("/api/live", { headers: HEADERS }).then((r) => r.json());
+    renderLive(data.runtime || {});
+  } catch (err) {
+    $("wake-live").textContent = "监听状态：连不上助手进程（可能已经退出）";
+  }
 }
 
 async function load() {
@@ -533,6 +629,46 @@ document.addEventListener("click", (ev) => {
 
 $("LLM_TEMPERATURE").addEventListener("input", (ev) => {
   $("LLM_TEMPERATURE-v").textContent = Number(ev.target.value).toFixed(1);
+});
+
+$("WAKE_SENSITIVITY").addEventListener("input", (ev) => {
+  $("WAKE_SENSITIVITY-v").textContent = Number(ev.target.value).toFixed(2);
+});
+
+$("WAKE_SILENCE").addEventListener("input", (ev) => {
+  $("WAKE_SILENCE-v").textContent = Number(ev.target.value).toFixed(1) + "s";
+});
+
+$("btn-wake-test").addEventListener("click", async () => {
+  const text = $("wake-test-text").value.trim();
+  const phrase = $("WAKE_PHRASE").value.trim();
+  const target = $("wake-test-status");
+  if (!text) {
+    status(target, "先填一句要试的话，比如 whisper 可能听成的「小兰小兰，现在几点」", "");
+    return;
+  }
+  const params = new URLSearchParams({ text, phrase });
+  try {
+    const data = await fetch("/api/wake/test?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    if (!data.ok) {
+      status(target, data.error || "比对失败", "bad");
+      return;
+    }
+    if (data.hit) {
+      status(
+        target,
+        data.rest
+          ? `✓ 命中，「${data.rest}」会被当成这一次的指令直接发出去`
+          : "✓ 命中，会接着说一句，命中后单独说的那句也算",
+        "ok"
+      );
+    } else {
+      status(target, "✗ 没命中：换个说法再试，或把提示词改短、改成叠词", "bad");
+    }
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
 });
 
 function syncPreset() {
@@ -679,7 +815,17 @@ $("btn-save").addEventListener("click", async () => {
     MIN_RECORD_SECONDS: $("MIN_RECORD_SECONDS").value,
     MAX_RECORD_SECONDS: $("MAX_RECORD_SECONDS").value,
     WEB_PORT: $("WEB_PORT").value,
+    WAKE_ENABLED: $("WAKE_ENABLED").checked,
+    WAKE_PHRASE: $("WAKE_PHRASE").value.trim(),
+    WAKE_SENSITIVITY: Number($("WAKE_SENSITIVITY").value),
+    WAKE_SILENCE: Number($("WAKE_SILENCE").value),
   };
+  if (payload.WAKE_ENABLED && !payload.WAKE_PHRASE) {
+    // 空提示词会让唤醒永远不命中，等于悄悄失效，不如直接拦下来
+    foot("唤醒提示词不能为空：要么填一句，要么把「常开唤醒」关掉", "bad");
+    btn.disabled = false;
+    return;
+  }
   const keyInput = $("OPENAI_KEY");
   if (keyInput.dataset.cleared === "1") {
     payload.OPENAI_KEY = "";              // 用户点了「清除」
@@ -699,6 +845,9 @@ $("btn-save").addEventListener("click", async () => {
     else parts.push("没有改动");
     if (data.asr && data.asr.ok === false) parts.push("识别服务重载失败：" + data.asr.error);
     else if (data.asr && data.asr.device) parts.push(`识别已切到 ${data.asr.device}/${data.asr.compute_type}`);
+    if (data.wake && data.wake.state) {
+      parts.push(data.wake.state === "listening" ? "唤醒已打开" : `唤醒 ${data.wake.state === "off" ? "已关闭" : data.wake.state}`);
+    }
     if (data.needs_restart && data.needs_restart.length) parts.push(`${data.needs_restart.join("、")} 需重启生效`);
     foot(parts.join(" · "), data.needs_restart && data.needs_restart.length ? "warn" : "ok");
     // 重新读取以刷新状态条与掩码
@@ -717,6 +866,7 @@ $("btn-save").addEventListener("click", async () => {
 });
 
 load();
+setInterval(pollLive, 2000);
 </script>
 </body>
 </html>
