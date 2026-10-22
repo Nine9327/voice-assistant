@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音助手 · 配置</title>
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #171a21;
+    --panel-2: #1d212a;
+    --line: #272c37;
+    --text: #e7eaf0;
+    --muted: #8c94a8;
+    --accent: #4f8cff;
+    --accent-dim: #2a4a86;
+    --ok: #3ecf8e;
+    --warn: #f5a524;
+    --danger: #ff6b6b;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 20% -10%, #182033 0%, var(--bg) 55%);
+    color: var(--text);
+    font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: 28px 20px 120px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(62,207,142,.6); }
+  .dot.bad { background: var(--danger); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px 18px 16px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .badge { font-size: 11px; font-weight: 400; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+
+  .seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; margin-bottom: 14px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--muted);
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    transition: background .15s, color .15s; font-family: inherit;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent-dim); color: #dbe7ff; }
+
+  .field { margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+  input[type=text], input[type=password], select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; font-family: inherit; outline: none;
+    transition: border-color .15s;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: #5b6376; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; min-width: 0; }
+  .row > .shrink { flex: 0 0 auto; }
+
+  .inline { display: flex; align-items: center; gap: 10px; }
+  .inline input[type=range] { flex: 1; accent-color: var(--accent); }
+  .val { font-variant-numeric: tabular-nums; color: var(--text); min-width: 44px; text-align: right; font-size: 13px; }
+
+  button.act {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 13px; cursor: pointer; font-size: 13px; font-family: inherit;
+    transition: border-color .15s, background .15s; white-space: nowrap;
+  }
+  button.act:hover { border-color: #3c4557; }
+  button.act:disabled { opacity: .5; cursor: default; }
+  button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act.primary:hover { background: #5f97ff; }
+
+  .status { font-size: 12px; margin-top: 8px; color: var(--muted); min-height: 17px; word-break: break-word; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--danger); }
+
+  .note { font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px; margin-top: 12px; }
+  audio { width: 100%; margin-top: 10px; height: 34px; }
+
+  footer.bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(16,18,24,.92); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line); padding: 12px 20px;
+  }
+  .bar-in { max-width: 1060px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+  .bar-in .msg { flex: 1; font-size: 12.5px; color: var(--muted); }
+  .bar-in .msg.ok { color: var(--ok); }
+  .bar-in .msg.bad { color: var(--danger); }
+  .bar-in .msg.warn { color: var(--warn); }
+
+  .hidden { display: none !important; }
+  code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } body { padding: 18px 12px 130px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>本地语音助手 · 配置</h1>
+      <div class="sub">改动点「保存并应用」即刻生效，并写入 settings.json，下次启动自动沿用。</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="grid">
+    <!-- 大模型服务 -->
+    <section class="card">
+      <h2>大模型服务 <span class="badge" id="llm-badge">—</span></h2>
+      <p class="hint">决定「怎么回答」。本地不联网，网络接口需要 API Key。</p>
+      <div class="seg" data-target="LLM_PROVIDER">
+        <button type="button" data-value="ollama">本地 Ollama</button>
+        <button type="button" data-value="openai">网络接口</button>
+      </div>
+
+      <div data-group="llm-ollama">
+        <div class="field">
+          <label for="OLLAMA_HOST">服务地址</label>
+          <div class="row">
+            <input type="text" id="OLLAMA_HOST" placeholder="http://127.0.0.1:11434">
+            <button class="act shrink" id="btn-ollama-models">刷新模型</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="LLM_MODEL">模型</label>
+          <select id="LLM_MODEL"></select>
+        </div>
+      </div>
+
+      <div data-group="llm-openai" class="hidden">
+        <div class="field">
+          <label for="preset">服务商预设</label>
+          <select id="preset"></select>
+        </div>
+        <div class="field">
+          <label for="OPENAI_BASE">接口地址（需以 /v1 结尾）</label>
+          <input type="text" id="OPENAI_BASE" placeholder="https://api.deepseek.com/v1">
+        </div>
+        <div class="field">
+          <label for="OPENAI_KEY">API Key</label>
+          <div class="row">
+            <input type="password" id="OPENAI_KEY" placeholder="sk-...（保存后只显示末四位）" autocomplete="off">
+            <button class="act shrink" id="btn-clear-key">清除</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="OPENAI_MODEL">模型名称</label>
+          <div class="row">
+            <input type="text" id="OPENAI_MODEL" list="model-suggest" placeholder="deepseek-chat">
+            <button class="act shrink" id="btn-openai-models">刷新模型</button>
+          </div>
+          <datalist id="model-suggest"></datalist>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>温度（越高越发散）</label>
+        <div class="inline">
+          <input type="range" id="LLM_TEMPERATURE" min="0" max="2" step="0.1">
+          <span class="val" id="LLM_TEMPERATURE-v">0.7</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="LLM_NUM_CTX">上下文长度</label>
+          <input type="text" id="LLM_NUM_CTX" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="MAX_HISTORY_TURNS">记忆轮数</label>
+          <input type="text" id="MAX_HISTORY_TURNS" inputmode="numeric">
+        </div>
+      </div>
+      <button class="act" id="btn-test">测试连接</button>
+      <div class="status" id="llm-status"></div>
+    </section>
+
+    <!-- 语音合成服务 -->
+    <section class="card">
+      <h2>语音合成服务 <span class="badge" id="tts-badge">—</span></h2>
+      <p class="hint">决定「用什么声音说」。在线音质自然，离线断网也能用。</p>
+      <div class="seg" data-target="TTS_ENGINE">
+        <button type="button" data-value="edge">在线 edge-tts</button>
+        <button type="button" data-value="sapi">离线系统语音</button>
+      </div>
+
+      <div data-group="tts-edge">
+        <div class="field">
+          <label for="TTS_VOICE">音色</label>
+          <select id="TTS_VOICE"></select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="TTS_RATE">语速</label>
+            <input type="text" id="TTS_RATE" placeholder="+12%">
+          </div>
+          <div class="field">
+            <label for="TTS_PITCH">音调</label>
+            <input type="text" id="TTS_PITCH" placeholder="+0Hz">
+          </div>
+        </div>
+      </div>
+
+      <div data-group="tts-sapi" class="hidden">
+        <div class="field">
+          <label for="SAPI_VOICE">系统声音</label>
+          <select id="SAPI_VOICE"></select>
+        </div>
+        <div class="note" id="sapi-note">语速与音量沿用上面的设置。离线引擎音质偏机械，但延迟极低、不花流量。</div>
+      </div>
+
+      <div class="field">
+        <label for="TTS_VOLUME">音量</label>
+        <input type="text" id="TTS_VOLUME" placeholder="+0%">
+      </div>
+      <button class="act" id="btn-preview">试听当前配置</button>
+      <audio id="preview" controls preload="none"></audio>
+      <div class="status" id="tts-status"></div>
+    </section>
+
+    <!-- 语音识别服务 -->
+    <section class="card">
+      <h2>语音识别服务 <span class="badge" id="asr-badge">—</span></h2>
+      <p class="hint">决定「怎么听懂你」。本地快且不花钱，网络接口不吃显卡。</p>
+      <div class="seg" data-target="ASR_PROVIDER">
+        <button type="button" data-value="local">本地模型</button>
+        <button type="button" data-value="openai">网络接口</button>
+      </div>
+
+      <div data-group="asr-local">
+        <div class="field">
+          <label>运行设备</label>
+          <div class="seg" data-target="WHISPER_DEVICE">
+            <button type="button" data-value="cuda">GPU</button>
+            <button type="button" data-value="cpu">CPU</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="WHISPER_MODEL">模型大小</label>
+            <select id="WHISPER_MODEL">
+              <option value="tiny">tiny（最快，准确率一般）</option>
+              <option value="base">base</option>
+              <option value="small">small（推荐）</option>
+              <option value="medium">medium（更准，更吃显存）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ASR_BEAM_SIZE">解码宽度</label>
+            <select id="ASR_BEAM_SIZE">
+              <option value="1">1（贪心，最快）</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="5">5（最准，最慢）</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div data-group="asr-openai" class="hidden">
+        <div class="field">
+          <label for="ASR_REMOTE_MODEL">识别模型</label>
+          <input type="text" id="ASR_REMOTE_MODEL" placeholder="whisper-1">
+        </div>
+        <div class="note">网络识别复用「大模型服务」里填的接口地址和 API Key，无需重复填写。改完保存会自动重载识别服务。</div>
+      </div>
+      <div class="status" id="asr-status"></div>
+    </section>
+
+    <!-- 交互 -->
+    <section class="card">
+      <h2>交互与页面</h2>
+      <p class="hint">按住说话的时长判定，以及配置页自身的设置。</p>
+      <div class="row">
+        <div class="field">
+          <label for="MIN_RECORD_SECONDS">最短录音（秒）</label>
+          <input type="text" id="MIN_RECORD_SECONDS" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="MAX_RECORD_SECONDS">最长录音（秒）</label>
+          <input type="text" id="MAX_RECORD_SECONDS" inputmode="numeric">
+        </div>
+      </div>
+      <div class="field">
+        <label for="WEB_PORT">配置页端口（改完需重启）</label>
+        <input type="text" id="WEB_PORT" inputmode="numeric">
+      </div>
+      <div class="note" id="env-note"></div>
+    </section>
+  </div>
+</div>
+
+<footer class="bar">
+  <div class="bar-in">
+    <span class="msg" id="foot-msg">就绪</span>
+    <button class="act" id="btn-reload">重新读取</button>
+    <button class="act primary" id="btn-save">保存并应用</button>
+  </div>
+</footer>
+
+<script>
+const HEADERS = { "Content-Type": "application/json", "X-Voice-Assistant": "1" };
+
+const PRESETS = [
+  { label: "DeepSeek", base: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { label: "硅基流动", base: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },
+  { label: "阿里百炼", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+  { label: "智谱 GLM", base: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+  { label: "Moonshot", base: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  { label: "OpenAI", base: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  { label: "自定义", base: "", model: "" },
+];
+
+const LOCALE_NAME = {
+  "zh-CN": "普通话", "zh-CN-liaoning": "东北话", "zh-CN-shaanxi": "陕西话",
+  "zh-HK": "粤语（中国香港）", "zh-TW": "国语（中国台湾）",
+};
+
+let STATE = null;
+
+const $ = (id) => document.getElementById(id);
+const segs = () => Array.from(document.querySelectorAll(".seg[data-target]"));
+const groups = () => Array.from(document.querySelectorAll("[data-group]"));
+
+function segValue(key) {
+  const seg = document.querySelector(`.seg[data-target="${key}"]`);
+  if (!seg) return null;
+  const on = seg.querySelector('button[aria-pressed="true"]');
+  return on ? on.dataset.value : null;
+}
+
+// 根据当前选择显示/隐藏对应字段组
+function paintGroups() {
+  const map = {
+    "llm-ollama": segValue("LLM_PROVIDER") === "ollama",
+    "llm-openai": segValue("LLM_PROVIDER") === "openai",
+    "tts-edge": segValue("TTS_ENGINE") === "edge",
+    "tts-sapi": segValue("TTS_ENGINE") === "sapi",
+    "asr-local": segValue("ASR_PROVIDER") === "local",
+    "asr-openai": segValue("ASR_PROVIDER") === "openai",
+  };
+  groups().forEach((g) => {
+    const show = map[g.dataset.group];
+    if (show === undefined) return;
+    g.classList.toggle("hidden", !show);
+  });
+}
+
+function status(el, text, kind) {
+  el.textContent = text || "";
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+function foot(text, kind) {
+  const el = $("foot-msg");
+  el.textContent = text;
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function fillVoices(list, current) {
+  const sel = $("TTS_VOICE");
+  sel.innerHTML = "";
+  if (!list.length) {
+    sel.innerHTML = '<option value="">（拉取失败，请检查网络后点「重新读取」）</option>';
+    return;
+  }
+  const byLocale = {};
+  list.forEach((v) => {
+    const key = v.locale || "其他";
+    (byLocale[key] = byLocale[key] || []).push(v);
+  });
+  Object.keys(byLocale).sort().forEach((loc) => {
+    const og = document.createElement("optgroup");
+    og.label = LOCALE_NAME[loc] || loc;
+    byLocale[loc].forEach((v) => {
+      const o = document.createElement("option");
+      o.value = v.name;
+      o.textContent = `${v.name.replace("Neural", "")} · ${v.gender}`;
+      if (v.name === current) o.selected = true;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+}
+
+function fillSapiVoices(list, current) {
+  const sel = $("SAPI_VOICE");
+  sel.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = "系统默认";
+  sel.appendChild(auto);
+  list.forEach((v) => {
+    const o = document.createElement("option");
+    o.value = v.name;
+    o.textContent = v.name;
+    if (v.name === current) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function fillOllamaModels(list, current) {
+  const sel = $("LLM_MODEL");
+  sel.innerHTML = "";
+  if (!list.length) {
+    sel.innerHTML = '<option value="">（没有可用模型）</option>';
+    return;
+  }
+  list.forEach((m) => {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    if (m === current) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (current && !list.includes(current)) {
+    const o = document.createElement("option");
+    o.value = current;
+    o.textContent = current + "（未安装）";
+    o.selected = true;
+    sel.insertBefore(o, sel.firstChild);
+  }
+}
+
+function renderState(data) {
+  STATE = data;
+  const c = data.config;
+  const r = data.runtime;
+
+  // 文本 / 数字输入
+  ["OLLAMA_HOST", "OPENAI_BASE", "OPENAI_MODEL", "ASR_REMOTE_MODEL",
+   "TTS_RATE", "TTS_PITCH", "TTS_VOLUME", "LLM_NUM_CTX", "MAX_HISTORY_TURNS",
+   "MIN_RECORD_SECONDS", "MAX_RECORD_SECONDS", "WEB_PORT"].forEach((k) => {
+    const el = $(k);
+    if (el) el.value = c[k] ?? "";
+  });
+
+  // 密钥不回填到输入框（避免把掩码当真实值再存回去），只提示是否已保存
+  const keyInput = $("OPENAI_KEY");
+  keyInput.value = "";
+  delete keyInput.dataset.cleared;
+  keyInput.placeholder = c.OPENAI_KEY__set
+    ? `已保存 ${c.OPENAI_KEY}，留空表示不修改`
+    : "sk-...（保存后只显示末四位）";
+  $("ASR_BEAM_SIZE").value = String(c.ASR_BEAM_SIZE ?? 1);
+  $("WHISPER_MODEL").value = c.WHISPER_MODEL ?? "small";
+
+  $("LLM_TEMPERATURE").value = c.LLM_TEMPERATURE ?? 0.7;
+  $("LLM_TEMPERATURE-v").textContent = Number(c.LLM_TEMPERATURE ?? 0.7).toFixed(1);
+
+  // 分段控件先按配置值初始化，再绘制
+  segs().forEach((seg) => {
+    const key = seg.dataset.target;
+    seg.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.value === c[key]));
+    });
+  });
+  paintGroups();
+
+  fillVoices(data.voices || [], c.TTS_VOICE);
+  fillSapiVoices(data.sapi_voices || [], c.SAPI_VOICE);
+
+  // 大模型模型列表：ollama 直接用状态里的，网络接口需要手动刷新
+  fillOllamaModels((r.llm && r.llm.models) || [], c.LLM_MODEL);
+
+  // 预设下拉
+  const preset = $("preset");
+  preset.innerHTML = PRESETS.map((p) => `<option value="${p.base}">${p.label}</option>`).join("");
+  const matched = PRESETS.find((p) => p.base && p.base === c.OPENAI_BASE);
+  preset.value = matched ? matched.base : "";
+
+  // 顶部状态
+  const chips = [];
+  const llmOk = r.llm && r.llm.ok;
+  chips.push(`<span class="chip"><span class="dot ${llmOk ? "ok" : "bad"}"></span>${c.LLM_PROVIDER === "openai" ? "网络模型" : "本地模型"}${llmOk ? " 已连接" : " 未连接"}</span>`);
+  if (r.asr) {
+    chips.push(`<span class="chip"><span class="dot ok"></span>识别 ${r.asr.device} / ${r.asr.compute_type}</span>`);
+  }
+  if (r.gpu && r.gpu.total) {
+    chips.push(`<span class="chip">显存 ${r.gpu.used} / ${r.gpu.total} MiB</span>`);
+  }
+  chips.push(`<span class="chip">PID ${r.pid}</span>`);
+  $("chips").innerHTML = chips.join("");
+
+  $("llm-badge").textContent = c.LLM_PROVIDER === "openai" ? "网络" : "本地";
+  $("tts-badge").textContent = c.TTS_ENGINE === "sapi" ? "离线" : "在线";
+  $("asr-badge").textContent = c.ASR_PROVIDER === "openai" ? "网络" : (r.asr ? r.asr.device : "本地");
+  $("env-note").innerHTML = `配置文件：<code>${r.settings_file}</code>${r.settings_exists ? "" : "（保存后生成）"}`;
+  $("llm-status").textContent = (r.llm && r.llm.detail) || "";
+  $("llm-status").className = "status " + (llmOk ? "ok" : "bad");
+}
+
+async function load() {
+  foot("读取配置…");
+  try {
+    const res = await fetch("/api/state", { headers: HEADERS });
+    const data = await res.json();
+    renderState(data);
+    foot("就绪", "ok");
+  } catch (err) {
+    foot("读取失败：" + err, "bad");
+  }
+}
+
+// 分段控件点击
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".seg[data-target] button");
+  if (!btn) return;
+  const seg = btn.closest(".seg");
+  seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+  paintGroups();
+  if (seg.dataset.target === "LLM_PROVIDER") syncPreset();
+});
+
+$("LLM_TEMPERATURE").addEventListener("input", (ev) => {
+  $("LLM_TEMPERATURE-v").textContent = Number(ev.target.value).toFixed(1);
+});
+
+function syncPreset() {
+  const found = PRESETS.find((p) => p.base && p.base === $("OPENAI_BASE").value.trim());
+  $("preset").value = found ? found.base : "";
+}
+
+$("preset").addEventListener("change", (ev) => {
+  const p = PRESETS.find((x) => x.base === ev.target.value);
+  if (!p || !p.base) return;
+  $("OPENAI_BASE").value = p.base;
+  $("OPENAI_MODEL").value = p.model;
+  $("model-suggest").innerHTML = `<option value="${p.model}">`;
+  status($("llm-status"), `已填入 ${p.label} 的地址与常用模型，记得填 API Key 后保存`, "");
+});
+
+$("btn-clear-key").addEventListener("click", () => {
+  const input = $("OPENAI_KEY");
+  input.value = "";
+  // 打标记：保存时显式提交空值，否则「清空」会被当成「没改」
+  input.dataset.cleared = "1";
+  input.placeholder = "已清空，保存后生效";
+});
+
+$("OPENAI_KEY").addEventListener("input", (ev) => {
+  delete ev.target.dataset.cleared;
+});
+
+async function fetchModels(kind) {
+  const isOpenai = kind === "openai";
+  const target = $("llm-status");
+  status(target, "正在获取模型列表…", "");
+  const params = new URLSearchParams({ provider: kind });
+  if (isOpenai) {
+    params.set("base", $("OPENAI_BASE").value.trim());
+    params.set("key", $("OPENAI_KEY").value.trim());
+  } else {
+    params.set("host", $("OLLAMA_HOST").value.trim());
+  }
+  try {
+    const res = await fetch("/api/models?" + params.toString(), { headers: HEADERS });
+    const data = await res.json();
+    if (!data.ok) {
+      status(target, data.error || "获取失败", "bad");
+      return;
+    }
+    if (isOpenai) {
+      $("model-suggest").innerHTML = data.models.map((m) => `<option value="${m}">`).join("");
+      status(target, `共 ${data.models.length} 个可用模型，已填入输入框候选`, "ok");
+      if (data.models.length && !data.models.includes($("OPENAI_MODEL").value)) {
+        $("OPENAI_MODEL").value = data.models[0];
+      }
+    } else {
+      fillOllamaModels(data.models, $("LLM_MODEL").value);
+      status(target, `本地共 ${data.models.length} 个模型`, "ok");
+    }
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+}
+
+$("btn-ollama-models").addEventListener("click", () => fetchModels("ollama"));
+$("btn-openai-models").addEventListener("click", () => fetchModels("openai"));
+
+$("btn-test").addEventListener("click", async () => {
+  const btn = $("btn-test");
+  btn.disabled = true;
+  status($("llm-status"), "测试中…", "");
+  try {
+    const payload = {
+      LLM_PROVIDER: segValue("LLM_PROVIDER"),
+      OLLAMA_HOST: $("OLLAMA_HOST").value.trim(),
+      OPENAI_BASE: $("OPENAI_BASE").value.trim(),
+      OPENAI_KEY: $("OPENAI_KEY").value.trim(),
+    };
+    const res = await fetch("/api/llm/test", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    const data = await res.json();
+    status($("llm-status"), `${data.ok ? "✓" : "✗"} ${data.detail}（${data.ms}ms）`, data.ok ? "ok" : "bad");
+  } catch (err) {
+    status($("llm-status"), "测试失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-preview").addEventListener("click", async () => {
+  const btn = $("btn-preview");
+  btn.disabled = true;
+  status($("tts-status"), "合成中…", "");
+  try {
+    const payload = {
+      text: "你好，我是你的语音助手。今天天气不错，有什么可以帮你的吗？",
+      engine: segValue("TTS_ENGINE"),
+      voice: segValue("TTS_ENGINE") === "sapi" ? $("SAPI_VOICE").value : $("TTS_VOICE").value,
+      rate: $("TTS_RATE").value.trim(),
+    };
+    const res = await fetch("/api/tts/preview", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ error: res.statusText }));
+      status($("tts-status"), detail.error || "合成失败", "bad");
+      return;
+    }
+    const blob = await res.blob();
+    const audio = $("preview");
+    if (audio.dataset.url) URL.revokeObjectURL(audio.dataset.url);
+    const url = URL.createObjectURL(blob);
+    audio.dataset.url = url;
+    audio.src = url;
+    audio.play().catch(() => {});
+    status($("tts-status"), `✓ 已生成 ${Math.round(blob.size / 1024)} KB`, "ok");
+  } catch (err) {
+    status($("tts-status"), "试听失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-reload").addEventListener("click", load);
+
+$("btn-save").addEventListener("click", async () => {
+  const btn = $("btn-save");
+  btn.disabled = true;
+  foot("保存中…");
+  const payload = {
+    LLM_PROVIDER: segValue("LLM_PROVIDER"),
+    OLLAMA_HOST: $("OLLAMA_HOST").value.trim(),
+    LLM_MODEL: $("LLM_MODEL").value,
+    LLM_TEMPERATURE: Number($("LLM_TEMPERATURE").value),
+    LLM_NUM_CTX: $("LLM_NUM_CTX").value,
+    MAX_HISTORY_TURNS: $("MAX_HISTORY_TURNS").value,
+    OPENAI_BASE: $("OPENAI_BASE").value.trim(),
+    OPENAI_MODEL: $("OPENAI_MODEL").value.trim(),
+    TTS_ENGINE: segValue("TTS_ENGINE"),
+    TTS_VOICE: $("TTS_VOICE").value,
+    TTS_RATE: $("TTS_RATE").value.trim(),
+    TTS_PITCH: $("TTS_PITCH").value.trim(),
+    TTS_VOLUME: $("TTS_VOLUME").value.trim(),
+    SAPI_VOICE: $("SAPI_VOICE").value,
+    ASR_PROVIDER: segValue("ASR_PROVIDER"),
+    ASR_REMOTE_MODEL: $("ASR_REMOTE_MODEL").value.trim(),
+    WHISPER_MODEL: $("WHISPER_MODEL").value,
+    WHISPER_DEVICE: segValue("WHISPER_DEVICE"),
+    ASR_BEAM_SIZE: $("ASR_BEAM_SIZE").value,
+    MIN_RECORD_SECONDS: $("MIN_RECORD_SECONDS").value,
+    MAX_RECORD_SECONDS: $("MAX_RECORD_SECONDS").value,
+    WEB_PORT: $("WEB_PORT").value,
+  };
+  const keyInput = $("OPENAI_KEY");
+  if (keyInput.dataset.cleared === "1") {
+    payload.OPENAI_KEY = "";              // 用户点了「清除」
+  } else if (keyInput.value.trim()) {
+    payload.OPENAI_KEY = keyInput.value.trim();
+  }                                      // 留空则不动已存密钥
+
+  try {
+    const res = await fetch("/api/config", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      foot("保存失败：" + (data.error || res.statusText), "bad");
+      return;
+    }
+    const parts = [];
+    if (data.changed && data.changed.length) parts.push(`已应用 ${data.changed.length} 项改动`);
+    else parts.push("没有改动");
+    if (data.asr && data.asr.ok === false) parts.push("识别服务重载失败：" + data.asr.error);
+    else if (data.asr && data.asr.device) parts.push(`识别已切到 ${data.asr.device}/${data.asr.compute_type}`);
+    if (data.needs_restart && data.needs_restart.length) parts.push(`${data.needs_restart.join("、")} 需重启生效`);
+    foot(parts.join(" · "), data.needs_restart && data.needs_restart.length ? "warn" : "ok");
+    // 重新读取以刷新状态条与掩码
+    const fresh = await fetch("/api/state", { headers: HEADERS }).then((r) => r.json());
+    renderState(fresh);
+    if (data.asr && data.asr.ok === false) {
+      status($("asr-status"), "重载失败：" + data.asr.error, "bad");
+    } else if (data.asr && data.asr.device) {
+      status($("asr-status"), `✓ 已切到 ${data.asr.device} / ${data.asr.compute_type}`, "ok");
+    }
+  } catch (err) {
+    foot("保存失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+load();
+</script>
+</body>
+</html>
