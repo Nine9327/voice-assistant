@@ -78,7 +78,7 @@ SCHEMA: dict[str, dict[str, Any]] = {
     },
     "ASR_REMOTE_MODEL": {"type": "str", "label": "网络识别模型", "group": "asr"},
     "WHISPER_MODEL": {
-        "type": "choice", "choices": ["tiny", "base", "small", "medium"],
+        "type": "choice", "choices": ["auto", "tiny", "base", "small", "medium"],
         "label": "识别模型", "group": "asr",
     },
     "WHISPER_DEVICE": {
@@ -89,6 +89,12 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "type": "int", "min": 1, "max": 5, "label": "解码宽度", "group": "asr",
     },
     "ASR_LANGUAGE": {"type": "str", "label": "识别语言", "group": "asr"},
+    "ASR_NORMALIZE": {"type": "bool", "label": "音量归一化", "group": "asr"},
+    "ASR_PROMPT_MODE": {
+        "type": "choice", "choices": ["auto", "on", "off"],
+        "label": "领域词提示", "group": "asr",
+    },
+    "ASR_HOTWORDS": {"type": "str", "label": "常用词", "group": "asr"},
 
     # ---------- 交互 ----------
     "MIN_RECORD_SECONDS": {

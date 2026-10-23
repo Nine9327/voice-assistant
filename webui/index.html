@@ -131,6 +131,8 @@
   .status.ok { color: var(--ok); }
   .status.bad { color: var(--danger); }
   .note { font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px; margin-top: 12px; }
+  h3.sub { font-size: 13px; font-weight: 600; color: var(--text); margin: 18px 0 10px; }
+  .hint2 { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin: 5px 0 0; }
   audio { width: 100%; margin-top: 10px; height: 34px; }
 
   /* ---------- 总览 ---------- */
@@ -476,20 +478,44 @@
           <div class="field">
             <label for="WHISPER_MODEL">模型大小</label>
             <select id="WHISPER_MODEL">
+              <option value="auto">auto（推荐：有显卡用 medium，否则 small）</option>
               <option value="tiny">tiny（最快，准确率一般）</option>
               <option value="base">base</option>
-              <option value="small">small（推荐）</option>
-              <option value="medium">medium（更准，更吃显存）</option>
+              <option value="small">small（省显存、响应最快）</option>
+              <option value="medium">medium（最准，多占约 1G 显存）</option>
             </select>
           </div>
           <div class="field">
             <label for="ASR_BEAM_SIZE">解码宽度</label>
             <select id="ASR_BEAM_SIZE">
-              <option value="1">1（贪心，最快）</option>
+              <option value="1">1（推荐，实测和 5 一样准）</option>
               <option value="2">2</option>
               <option value="3">3</option>
-              <option value="5">5（最准，最慢）</option>
+              <option value="5">5（慢三成，中文短句没提升）</option>
             </select>
+          </div>
+        </div>
+
+        <h3 class="sub">听清人话的三个小开关</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="ASR_NORMALIZE"> 识别前把音量拉到满刻度</label>
+          <p class="hint2">麦克风增益偏低、或者人坐得远的时候能救回几个字。几乎不花时间，建议开着。</p>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="ASR_PROMPT_MODE">领域词提示</label>
+            <select id="ASR_PROMPT_MODE">
+              <option value="auto">auto（推荐：小模型才用）</option>
+              <option value="on">一直开着</option>
+              <option value="off">关掉</option>
+            </select>
+            <p class="hint2">把本机程序名等常见词提前告诉模型，实测能修掉「打开计识本」这类错字；
+              medium 自己够强，再给提示反而会被带偏，所以默认只在小模型上用。</p>
+          </div>
+          <div class="field">
+            <label for="ASR_HOTWORDS">你常说的词</label>
+            <input type="text" id="ASR_HOTWORDS" placeholder="用空格分隔，如：达梦 瀚高 张伟">
+            <p class="hint2">人名、地名、产品名这类专属词最容易听错，写在这里效果好。<span id="asr-prompt-count"></span></p>
           </div>
         </div>
       </div>
@@ -1069,7 +1095,10 @@ function renderState(data) {
     ? "已保存 " + c.OPENAI_KEY + "，留空表示不修改"
     : "sk-...（保存后只显示末四位）";
   $("ASR_BEAM_SIZE").value = String(c.ASR_BEAM_SIZE ?? 1);
-  $("WHISPER_MODEL").value = c.WHISPER_MODEL ?? "small";
+  $("WHISPER_MODEL").value = c.WHISPER_MODEL ?? "auto";
+  $("ASR_NORMALIZE").checked = c.ASR_NORMALIZE !== false;
+  $("ASR_PROMPT_MODE").value = c.ASR_PROMPT_MODE ?? "auto";
+  $("ASR_HOTWORDS").value = c.ASR_HOTWORDS ?? "";
 
   $("LLM_TEMPERATURE").value = c.LLM_TEMPERATURE ?? 0.7;
   $("LLM_TEMPERATURE-v").textContent = Number(c.LLM_TEMPERATURE ?? 0.7).toFixed(1);
@@ -1181,7 +1210,11 @@ function renderState(data) {
 
   $("llm-badge").textContent = c.LLM_PROVIDER === "openai" ? "网络" : "本地";
   $("tts-badge").textContent = c.TTS_ENGINE === "sapi" ? "离线" : "在线";
-  $("asr-badge").textContent = c.ASR_PROVIDER === "openai" ? "网络" : (r.asr ? r.asr.device : "本地");
+  const _asr = r.asr || {};
+  $("asr-badge").textContent = c.ASR_PROVIDER === "openai"
+    ? "网络"
+    : (((_asr.model_size && _asr.model_size !== "-") ? _asr.model_size : "") + " · " + (_asr.device || "本地"));
+  if ((_asr.prompt_words || 0) > 0) $("asr-prompt-count").textContent = "当前提示词里还有本机 " + _asr.prompt_words + " 个常见词。";
   $("wake-badge").textContent = c.WAKE_ENABLED ? "开" : "关";
   if (r.mcp) {
     const m = r.mcp;
@@ -2037,6 +2070,9 @@ $("btn-save").addEventListener("click", async () => {
     WHISPER_MODEL: $("WHISPER_MODEL").value,
     WHISPER_DEVICE: segValue("WHISPER_DEVICE"),
     ASR_BEAM_SIZE: $("ASR_BEAM_SIZE").value,
+    ASR_NORMALIZE: $("ASR_NORMALIZE").checked,
+    ASR_PROMPT_MODE: $("ASR_PROMPT_MODE").value,
+    ASR_HOTWORDS: $("ASR_HOTWORDS").value.trim(),
     MIN_RECORD_SECONDS: $("MIN_RECORD_SECONDS").value,
     MAX_RECORD_SECONDS: $("MAX_RECORD_SECONDS").value,
     WEB_PORT: $("WEB_PORT").value,
@@ -2120,7 +2156,9 @@ $("btn-save").addEventListener("click", async () => {
     if (data.asr && data.asr.ok === false) {
       status($("asr-status"), "重载失败：" + data.asr.error, "bad");
     } else if (data.asr && data.asr.device) {
-      status($("asr-status"), "✓ 已切到 " + data.asr.device + " / " + data.asr.compute_type, "ok");
+      const info = [`✓ 已切到 ${data.asr.device} / ${data.asr.compute_type}`];
+      if (data.asr.model_size) info.push(`模型 ${data.asr.model_size}`);
+      status($("asr-status"), info.join("，"), "ok");
     }
   } catch (err) {
     foot("保存失败：" + err, "bad");

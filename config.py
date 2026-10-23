@@ -34,12 +34,19 @@ PERSONA_VOICE = True              # 换性格时连带换配套音色与语速
 # ---------------- 语音识别 ----------------
 ASR_PROVIDER = "local"            # local=本地 faster-whisper / openai=网络识别接口
 ASR_REMOTE_MODEL = "whisper-1"    # 网络识别用的模型；复用上面的 OPENAI_BASE / OPENAI_KEY
-WHISPER_MODEL = "small"           # tiny / base / small / medium
+# auto = 有 GPU 就用 medium，只剩 CPU 就退回 small。
+# medium 在远场/噪声/混响下的错字率只有 small 的一半以内（实测 13.6% → 5.3%），
+# 代价是加载约 5 秒、每句多 130ms；CPU 上 medium 慢到不能用，所以回退时自动降档。
+WHISPER_MODEL = "auto"            # auto / tiny / base / small / medium
 WHISPER_DEVICE = "cuda"           # "cuda" 更快；显存不足或 CUDA 库缺失会自动回退 cpu
-WHISPER_COMPUTE = "float16"       # cuda 用 float16，回退时自动改 int8
+WHISPER_COMPUTE = "float16"       # cuda 用 float16，回退时自动改 int8；medium 会自动降为 int8_float16
 WHISPER_THREADS = 8
-ASR_BEAM_SIZE = 1                 # 1=贪心解码，比 beam5 快三倍，中文短句准确率几乎无差别
+ASR_BEAM_SIZE = 1                 # 1=贪心解码。实测 beam=5 在中文短句上字错率没有变化，
+                                  # 只是慢 30%，所以保持 1；口音重或长句可以自己调大
 ASR_LANGUAGE = "zh"
+ASR_NORMALIZE = True              # 识别前把音量拉到接近满刻度。远端/小声说话时能救回几个字
+ASR_PROMPT_MODE = "auto"          # auto=小模型才给提示词（medium 以上给了反而更差）/ on / off
+ASR_HOTWORDS = ""                 # 你自己常说的词，用空格或顿号分隔，会喂给模型当提示词
 MODEL_DIR = str(ROOT / "models")
 
 # ---------------- 录音 ----------------

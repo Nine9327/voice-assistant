@@ -255,6 +255,29 @@ def _get_index(refresh: bool = False) -> list[Entry]:
     return _index
 
 
+def labels(limit: int = 25) -> list[str]:
+    """本机认得的程序名，取前若干个。
+
+    给识别模块的「领域词提示」用：这些恰恰是「打开 XX」里最容易听错的字。
+    索引本身会缓存一小时，重复调用不扫盘。
+    """
+    try:
+        entries = _get_index()
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        name = (entry.label or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def find(name: str, deep: bool = True) -> Entry | None:
     """在索引里找。返回命中的条目，找不到返回 None。
 

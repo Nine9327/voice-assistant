@@ -230,6 +230,25 @@ class AsrService:
     def compute_type(self) -> str:
         return str(getattr(self._impl, "compute_type", "?"))
 
+    @property
+    def model_size(self) -> str:
+        """实际用的模型。配置写 auto 时，GPU 上是 medium、CPU 上是 small，要如实回显。"""
+        return str(getattr(self._impl, "model_size", "") or getattr(self._impl, "compute_type", "?"))
+
+    @property
+    def prompt_words(self) -> int:
+        """领域词提示里塞了多少个词。页面上能看到「加了常用词」是不是真生效了。"""
+        try:
+            import asr
+
+            text = asr.build_initial_prompt(self.model_size)
+        except Exception:  # noqa: BLE001
+            return 0
+        if "常见词：" not in text:
+            return 0
+        body = text.split("常见词：", 1)[1].rstrip("。")
+        return body.count("、") + 1
+
     def transcribe(self, audio):
         with self._lock:
             return self._impl.transcribe(audio)
@@ -256,6 +275,7 @@ class AsrService:
             "ok": True,
             "device": new_impl.device,
             "compute_type": new_impl.compute_type,
+            "model_size": getattr(new_impl, "model_size", ""),
         }
 
 
@@ -275,9 +295,14 @@ class RuntimeBridge:
     def info(self) -> dict:
         out: dict = {}
         if self.asr is None:
-            out["asr"] = {"device": "未加载", "compute_type": "-"}
+            out["asr"] = {"device": "未加载", "compute_type": "-", "model_size": "-"}
         else:
-            out["asr"] = {"device": self.asr.device, "compute_type": self.asr.compute_type}
+            out["asr"] = {
+                "device": self.asr.device,
+                "compute_type": self.asr.compute_type,
+                "model_size": self.asr.model_size,
+                "prompt_words": self.asr.prompt_words,
+            }
         if self.live is not None:
             out.update(self.live.snapshot())
         if self.waker is not None:
