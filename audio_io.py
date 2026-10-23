@@ -91,6 +91,11 @@ class Recorder:
         with self._lock:
             self._ring.clear()
 
+    def latest_seq(self) -> int:
+        """当前电平样本序号。用它当起点，可以避开「一开录就把历史电平重放一遍」。"""
+        with self._lock:
+            return self._seq
+
     def levels_since(self, seq: int) -> list[tuple[int, float, float]]:
         """取序号大于 seq 的电平样本，调用方自己记住最后一条的序号。"""
         with self._lock:

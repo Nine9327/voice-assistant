@@ -255,6 +255,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "rest": rest.strip(),
                 "phrase": phrase,
                 "text": text,
+                "mode": "同音" if getattr(wake, "HAS_PINYIN", False) else "逐字",
             }
         )
 

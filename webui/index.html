@@ -306,7 +306,7 @@
       <div class="field">
         <label for="WAKE_PHRASE">唤醒提示词</label>
         <input type="text" id="WAKE_PHRASE" placeholder="小蓝小蓝" maxlength="12">
-        <div class="note" id="wake-tip">建议 3~6 个字；叠词（小蓝小蓝）比单词更不容易被日常聊天误触发。</div>
+        <div class="note" id="wake-tip">建议 3~6 个字；判定按<strong>同音</strong>来，听成「小兰」「小男」「晓岚」也算，但两个字必须读音全对。叠词（小蓝小蓝）比单词更不容易被日常聊天误触发。</div>
       </div>
 
       <div class="field">
@@ -323,6 +323,15 @@
           <input type="range" id="WAKE_SILENCE" min="0.3" max="3" step="0.1">
           <span class="val" id="WAKE_SILENCE-v">0.8s</span>
         </div>
+      </div>
+
+      <div class="field">
+        <label>连续对话（唤醒后多久之内可以直接接着说）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SESSION_SECONDS" min="0" max="120" step="5">
+          <span class="val" id="WAKE_SESSION_SECONDS-v">20s</span>
+        </div>
+        <div class="note">这段时间里不用再喊提示词，说完一句它会继续听下一句；一直没人说话就转回休眠，再喊提示词才重新激活。拖到 0 就是每句都要喊。</div>
       </div>
 
       <div class="field">
@@ -527,6 +536,9 @@ function renderState(data) {
   const silent = Number(c.WAKE_SILENCE ?? 0.8);
   $("WAKE_SILENCE").value = silent;
   $("WAKE_SILENCE-v").textContent = silent.toFixed(1) + "s";
+  const sess = Number(c.WAKE_SESSION_SECONDS ?? 20);
+  $("WAKE_SESSION_SECONDS").value = sess;
+  $("WAKE_SESSION_SECONDS-v").textContent = sess > 0 ? sess + "s" : "关";
 
   // 分段控件先按配置值初始化，再绘制
   segs().forEach((seg) => {
@@ -557,8 +569,9 @@ function renderState(data) {
     chips.push(`<span class="chip"><span class="dot ok"></span>识别 ${r.asr.device} / ${r.asr.compute_type}</span>`);
   }
   if (r.wake) {
-    const on = r.wake.enabled && r.wake.state !== "off";
-    chips.push(`<span class="chip"><span class="dot ${on ? "ok" : ""}"></span>唤醒 ${on ? "监听中" : "已关闭"}</span>`);
+    const on = !!r.wake.enabled;
+    const label = !on ? "已关闭" : (r.status === "sleeping" ? "休眠中" : "已激活");
+    chips.push(`<span class="chip"><span class="dot ${on ? "ok" : ""}"></span>唤醒 ${label}</span>`);
   }
   if (r.gpu && r.gpu.total) {
     chips.push(`<span class="chip">显存 ${r.gpu.used} / ${r.gpu.total} MiB</span>`);
@@ -576,7 +589,7 @@ function renderState(data) {
   $("llm-status").className = "status " + (llmOk ? "ok" : "bad");
 }
 
-const STATUS_NAME = { idle: "空闲", listening: "录音中", thinking: "思考中", speaking: "播报中" };
+const STATUS_NAME = { sleeping: "休眠中", idle: "空闲", listening: "录音中", thinking: "思考中", speaking: "播报中" };
 const WAKE_NAME = { off: "未监听", listening: "监听中", triggered: "刚被唤醒", error: "出错" };
 
 function renderLive(r) {
@@ -584,6 +597,9 @@ function renderLive(r) {
   const bits = [`助手 ${STATUS_NAME[r.status] || "未知"}`];
   if (wake.state !== undefined) bits.push(`唤醒 ${WAKE_NAME[wake.state] || wake.state}`);
   if (wake.phrase) bits.push(`提示词「${wake.phrase}」`);
+  if (wake.match_mode) bits.push(`匹配 ${wake.match_mode}`);
+  if (r.status === "sleeping") bits.push("等提示词激活");
+  else if (r.session > 0) bits.push(`会话保持 剩余 ${r.session}s`);
   if (wake.hits) bits.push(`已唤醒 ${wake.hits} 次`);
   if (wake.last_heard) bits.push(`最近听到「${wake.last_heard}」`);
   if (wake.peak) {
@@ -639,6 +655,11 @@ $("WAKE_SILENCE").addEventListener("input", (ev) => {
   $("WAKE_SILENCE-v").textContent = Number(ev.target.value).toFixed(1) + "s";
 });
 
+$("WAKE_SESSION_SECONDS").addEventListener("input", (ev) => {
+  const v = Number(ev.target.value);
+  $("WAKE_SESSION_SECONDS-v").textContent = v > 0 ? v + "s" : "关";
+});
+
 $("btn-wake-test").addEventListener("click", async () => {
   const text = $("wake-test-text").value.trim();
   const phrase = $("WAKE_PHRASE").value.trim();
@@ -656,11 +677,12 @@ $("btn-wake-test").addEventListener("click", async () => {
       return;
     }
     if (data.hit) {
+      const mode = data.mode ? `（${data.mode}匹配）` : "";
       status(
         target,
         data.rest
-          ? `✓ 命中，「${data.rest}」会被当成这一次的指令直接发出去`
-          : "✓ 命中，会接着说一句，命中后单独说的那句也算",
+          ? `✓ 命中${mode}，「${data.rest}」会被当成这一次的指令直接发出去`
+          : `✓ 命中${mode}，会接着说一句，命中后单独说的那句也算`,
         "ok"
       );
     } else {
@@ -819,6 +841,7 @@ $("btn-save").addEventListener("click", async () => {
     WAKE_PHRASE: $("WAKE_PHRASE").value.trim(),
     WAKE_SENSITIVITY: Number($("WAKE_SENSITIVITY").value),
     WAKE_SILENCE: Number($("WAKE_SILENCE").value),
+    WAKE_SESSION_SECONDS: Number($("WAKE_SESSION_SECONDS").value),
   };
   if (payload.WAKE_ENABLED && !payload.WAKE_PHRASE) {
     // 空提示词会让唤醒永远不命中，等于悄悄失效，不如直接拦下来

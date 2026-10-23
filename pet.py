@@ -37,6 +37,7 @@ PET_WIDTH = 280          # 窗口显示宽度（逻辑像素）
 POLL_MS = 700
 
 STATUS_COLOR = {
+    "sleeping": (92, 116, 168),
     "idle": (110, 160, 235),
     "listening": (235, 90, 90),
     "thinking": (238, 180, 80),

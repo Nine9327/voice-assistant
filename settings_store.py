@@ -104,6 +104,10 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "type": "float", "min": 0.3, "max": 3.0, "step": 0.1,
         "label": "断句静音", "group": "wake",
     },
+    "WAKE_SESSION_SECONDS": {
+        "type": "int", "min": 0, "max": 300,
+        "label": "会话保持", "group": "wake",
+    },
 }
 
 SECRET_KEYS = {k for k, v in SCHEMA.items() if v.get("type") == "secret"}

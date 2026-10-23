@@ -151,14 +151,16 @@ class LiveState:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.status = "idle"      # idle / listening / thinking / speaking
+        self.status = "idle"      # sleeping / idle / listening / thinking / speaking
         self.heard = ""
         self.reply = ""
         self.asr_ms = 0.0
         self.bubble = ""
+        self.session_until = 0.0
 
     def update(self, status: str | None = None, heard: str | None = None,
-               reply: str | None = None, asr_ms: float | None = None) -> None:
+               reply: str | None = None, asr_ms: float | None = None,
+               session_until: float | None = None) -> None:
         with self._lock:
             if status is not None:
                 self.status = status
@@ -168,6 +170,8 @@ class LiveState:
                 self.reply = reply
             if asr_ms is not None:
                 self.asr_ms = asr_ms
+            if session_until is not None:
+                self.session_until = session_until
             self.bubble = self._compose_bubble()
 
     def _compose_bubble(self) -> str:
@@ -187,6 +191,8 @@ class LiveState:
                 "reply": self.reply,
                 "bubble": self.bubble,
                 "asr_ms": round(self.asr_ms),
+                # 会话保持的剩余秒数：配置页拿它显示「还能直接说多久」
+                "session": max(0, round(self.session_until - time.monotonic())),
             }
 
 
@@ -331,7 +337,10 @@ def record_utterance(rec, segmenter, no_speech_timeout: float = 8.0,
     """
     segmenter.reset()
     rec.start()
-    cursor = 0
+    # 必须从「当前」序号开始消费：电平缓冲留着最近 24 秒，从 0 开始会把
+    # 上一轮播报的电平重放一遍，断句器会在旧时间轴上立刻报一句「说完了」，
+    # 录音只剩几十毫秒，表现为「刚开麦就说没听到声音」。
+    cursor = rec.latest_seq()
     spoke = False
     t0 = time.perf_counter()
     while not STOP.is_set() and not INTERRUPT.is_set():
@@ -616,7 +625,8 @@ def main() -> None:
     hotkey.start()
 
     import vad
-    from wake import Waker
+    import wake as wake_mod
+    from wake import Waker, normalize as wake_norm, peak_of as wake_peak
 
     segmenter = vad.Segmenter(config.WAKE_SENSITIVITY, config.WAKE_SILENCE)
 
@@ -642,14 +652,51 @@ def main() -> None:
     tips = "按住 [bold]空格[/bold] 或说[bold]唤醒词[/bold]，也可以点桌面上的形象"
     console.print(f"\n[bold green]就绪[/bold green]  {tips}，[bold]Ctrl+C[/bold] 退出\n")
 
+    # 会话保持：唤醒后 session_until 之前都不用再喊提示词，超时自动转休眠
+    session_until = 0.0
+    last_reply = ""
+
+    def wake_ready() -> bool:
+        return waker is not None and config.WAKE_ENABLED
+
+    def sounds_like_last_reply(text: str) -> bool:
+        """会话模式的自激保护：听到的内容就是自己刚说的话，当作回声丢掉。
+
+        理论和实测都该由「播完再开麦」挡住，但外放音量、蓝牙延迟都可能漏一点进来；
+        漏进来的后果是它对着自己的回答一路追问下去，所以再兜一层。
+        """
+        if not last_reply:
+            return False
+        a = wake_norm(text)
+        b = wake_norm(last_reply)
+        if len(a) < 4 or not b:
+            return False
+        return a in b or b in a
+
     try:
         while not STOP.is_set():
-            live.update("idle")
-            if waker is not None:
-                waker.enable()
-            item = wait_for_trigger(hotkey, bus)
-            if item is None:
-                break
+            in_session = (
+                wake_ready()
+                and config.WAKE_SESSION_SECONDS > 0
+                and time.monotonic() < session_until
+            )
+            if in_session:
+                # 会话中：话筒一直开着，接着说就行
+                live.update("listening", session_until=session_until)
+                item = (
+                    (TriggerBus.PTT, "", "")
+                    if hotkey.pressed.is_set()
+                    else (TriggerBus.LISTEN, "", "")
+                )
+            else:
+                session_until = 0.0
+                # 没开唤醒词就没有「休眠」这回事，只是空闲
+                live.update("sleeping" if wake_ready() else "idle", session_until=0.0)
+                if waker is not None:
+                    waker.enable()
+                item = wait_for_trigger(hotkey, bus)
+                if item is None:
+                    break
             if waker is not None:
                 waker.disable()
             INTERRUPT.clear()
@@ -679,16 +726,38 @@ def main() -> None:
                     spoke = True
                 else:
                     console.print("[red]● 录音中…[/red]", end="\r")
+                    if in_session:
+                        # 会话模式：话筒一直开着，等到你说完、或者会话到期为止
+                        if speaker is not None:
+                            speaker.wait_done(5.0)  # 播报真的放完了才开麦
+                        time.sleep(0.2)             # 让尾音散掉，别被自己的回声触发
+                        no_speech = max(1.0, session_until - time.monotonic())
+                    else:
+                        no_speech = 8.0
                     audio, spoke = record_utterance(
                         rec, segmenter,
-                        no_speech_timeout=8.0,
+                        no_speech_timeout=no_speech,
                         max_seconds=min(config.MAX_RECORD_SECONDS, 25),
                     )
                 duration = len(audio) / config.SAMPLE_RATE
                 console.print(" " * 20, end="\r")
 
-                if not spoke or duration < config.MIN_RECORD_SECONDS:
-                    console.print("[dim]没听到声音[/dim]")
+                if not spoke:
+                    if in_session:
+                        session_until = 0.0
+                        console.print("[dim]好一会儿没说话，转回休眠（可以再喊一次提示词）[/dim]")
+                    else:
+                        console.print("[dim]没听到声音[/dim]")
+                    continue
+                if duration < config.MIN_RECORD_SECONDS:
+                    # 咳嗽、键盘、上一句播报的尾音都算这类，不能因为它把会话掐掉
+                    console.print("[dim]太短了，忽略[/dim]")
+                    continue
+                # 断句阈值是自适应的，静音段也会被切出来；whisper 在这种段上会编句子，
+                # 连续对话模式下表现为「没人说话它却一直答」。这里用绝对下限再挡一次。
+                peak = wake_peak(audio)
+                if peak < wake_mod.ANSWER_PEAK:
+                    console.print(f"[dim]声音太轻（峰值 {peak:.4f}），忽略[/dim]")
                     continue
 
                 t_asr = time.perf_counter()
@@ -696,6 +765,9 @@ def main() -> None:
                 asr_ms = (time.perf_counter() - t_asr) * 1000
                 if not user_text:
                     console.print("[dim]没听清，再说一次[/dim]")
+                    continue
+                if in_session and sounds_like_last_reply(user_text):
+                    console.print("[dim]这像是自己刚说的，忽略[/dim]")
                     continue
                 console.print(f"[cyan]你：[/cyan]{user_text}  [dim]({asr_ms:.0f}ms)[/dim]")
 
@@ -708,12 +780,18 @@ def main() -> None:
             reply = reply_once(history, speaker, hotkey, live)
             history.append({"role": "assistant", "content": reply})
             history = trim_history(history)
+            last_reply = reply
 
             if speaker is not None:
                 speaker.wait_done()
+            # 一轮回答结束：处于唤醒状态就再挂一段「会话」，让用户可以直接追问
+            if wake_ready() and config.WAKE_SESSION_SECONDS > 0:
+                session_until = time.monotonic() + config.WAKE_SESSION_SECONDS
+            else:
+                session_until = 0.0
             # 只切状态，保留 heard / reply：气泡在 idle 时本来就是空的，
             # 但配置页和悬浮窗还能看到「上一轮说了什么」，排查问题时很有用
-            live.update("idle")
+            live.update("idle", session_until=session_until)
     except KeyboardInterrupt:
         console.print("\n[dim]再见[/dim]")
     finally:

@@ -5,15 +5,22 @@ SDK 或者自己训练；而本机 GPU 上 whisper small 识别 3 秒音频只�
 「每说完一句就转写一次」的开销完全可以接受（rtf≈0.05，也就是占用 5% 的
 GPU 时间），还顺带拿到了整句话的内容。
 
-命中规则（`match`）：
-* 先做精确子串匹配，命中即唤醒；
-* 不行再做编辑距离匹配，允许 1~2 个字的偏差 —— whisper 经常把「小蓝」听成
-  「小兰」「晓岚」，严格相等会导致唤醒率极低；
+命中规则（`match`）—— 先按「字」比，比不过再按「音」比：
+* 第一道：原文精确子串，命中即唤醒（最省事，也保证提示词后面的剩余文本干净）；
+* 第二道：**拼音比对**。把每个字转成不带声调的拼音再滑动窗口对齐，
+  这样「小蓝 / 小兰 / 晓岚 / 小懒」都算命中 —— whisper 认字错、但读音通常是对的；
+  再把易混的声母韵母归一（zh/z、ch/c、sh/s、n/l、ang/an、eng/en、ing/in），
+  于是「小男小男」这种把 l 听成 n 的情况也能唤醒（实测中最常见的一种错法）；
 * 提示词后面的内容会被当作这次的指令一起送进大模型，
   所以「小蓝小蓝，今天天气怎么样」一句说完即可，不用等唤醒再重复一遍。
+
+为什么不做成「允许错 1~2 个字」的编辑距离：字错和音错是两回事。
+「小蓝」被听成「校篮」是同一个音，该唤醒；被听成「小绿」只错一个字，
+但读音完全不同，不该唤醒 —— 编辑距离分不清这两种，拼音可以。
 """
 from __future__ import annotations
 
+import functools
 import re
 import threading
 import time
@@ -22,6 +29,14 @@ import numpy as np
 
 import config
 import vad
+
+try:  # 拼音是同音唤醒的基础；没装上就退化成逐字比对，功能不中断
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+
+    HAS_PINYIN = True
+except Exception:  # noqa: BLE001
+    _lazy_pinyin = None
+    HAS_PINYIN = False
 
 # 保留中文、英文、数字；标点、空格、表情全部丢掉再比对
 _NOISE = re.compile(r"[^\u4e00-\u9fff\u3040-\u30ffA-Za-z0-9]+")
@@ -33,26 +48,72 @@ _NOISE = re.compile(r"[^\u4e00-\u9fff\u3040-\u30ffA-Za-z0-9]+")
 _PEAK_AT_MIN = 0.008
 _PEAK_AT_MAX = 0.0015
 
+# 「值不值得送去识别」的绝对下限，录音回答这一侧用它（不看灵敏度）。
+# 断句阈值是自适应的，安静房间里会掉到 0.0015 附近，随便一点噪声就能断出一句；
+# 真正的幻觉防线是识别端的 silero VAD（asr.py 里 vad_filter=True），
+# 这里只做一道便宜的预筛：明显是静音就直接跳过，省下 150ms 显卡。
+# 别定太高 —— 实测外放合成音只有 0.0026，定到 0.0035 就会把正常语音挡在外面。
+ANSWER_PEAK = 0.003
+
+# 易混声母 / 韵母归一。目标不是「标准拼音」，而是「听起来像」：
+# 中文语音里 zh/z、ch/c、sh/s、n/l 本来就分不清，前后鼻音在快速口语里也常常合并。
+_INITIALS = (("zh", "z"), ("ch", "c"), ("sh", "s"))
+_FINALS = (
+    ("iang", "ian"), ("uang", "uan"),
+    ("ang", "an"), ("eng", "en"), ("ing", "in"), ("ong", "on"),
+)
+
 
 def normalize(text: str) -> str:
     return _NOISE.sub("", text or "").lower()
 
 
-def _distance(a: str, b: str) -> int:
-    """莱文斯坦距离（字符串都很短，直接写，不引依赖）。"""
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
+def peak_of(audio) -> float:
+    """片段的能量代表值：95 分位数幅度（片段尾部总带静音，均值会被稀释）。"""
+    if getattr(audio, "size", 0) == 0:
+        return 0.0
+    return float(np.percentile(np.abs(audio), 95))
+
+
+def min_peak(sensitivity: float) -> float:
+    """唤醒监听用的能量门槛，跟着灵敏度反向走。"""
+    k = min(1.0, max(0.0, float(sensitivity)))
+    return _PEAK_AT_MIN + k * (_PEAK_AT_MAX - _PEAK_AT_MIN)
+
+
+def _fuzz(syllable: str) -> str:
+    """把拼音音节压成「听感等价类」。"""
+    s = (syllable or "").strip().lower()
+    if not s:
+        return ""
+    for a, b in _INITIALS:
+        if s.startswith(a):
+            s = b + s[len(a):]
+            break
+    if s.startswith("n"):          # 小蓝 → 小男：边音 / 鼻音混淆
+        s = "l" + s[1:]
+    for a, b in _FINALS:
+        if s.endswith(a):
+            s = s[: -len(a)] + b
+            break
+    return s
+
+
+@functools.lru_cache(maxsize=8192)
+def _syllable(ch: str) -> str:
+    """单字 → 听感等价的拼音。非中文原样小写返回，保证比对时有东西可比。"""
+    if _lazy_pinyin is not None and "\u4e00" <= ch <= "\u9fff":
+        try:
+            got = _lazy_pinyin(ch)
+            if got and got[0]:
+                return _fuzz(got[0])
+        except Exception:  # noqa: BLE001
+            pass
+    return _fuzz(ch)
+
+
+def _syllables(text: str) -> list[str]:
+    return [_syllable(ch) for ch in text]
 
 
 def _repeat_unit(target: str) -> str | None:
@@ -64,25 +125,45 @@ def _repeat_unit(target: str) -> str | None:
     return unit if unit * 2 == target else None
 
 
-def _match_repeat(heard: str, unit: str) -> int | None:
-    """连续两次模糊命中重复单元，返回命中结束位置。
+def _match_repeat(heard: list[str], unit: list[str]) -> int | None:
+    """连续两次命中重复单元，返回命中结束位置（字节下标，按字计）。
 
-    专门处理 whisper 把「小蓝小蓝」听成「小兰小兰」的情况：整串比是错 2 个字，
-    按整串算会被判定为不匹配，但按单元比每个单元只错 1 个字，属于正常识别漂移。
+    专门处理「小蓝小蓝」被听成「小兰小蓝」这类一半对一半错的情况：
+    整串滑窗差一点，按单元比则两边都命中。
     """
     size = len(unit)
     for i in range(0, max(1, len(heard) - size + 1)):
-        first = heard[i : i + size]
-        if _distance(first, unit) > 1:
+        if heard[i: i + size] != unit:
             continue
         for skip in (0, 1):  # 允许中间夹一个重复字，如「小蓝小蓝蓝」
             j = i + size + skip
-            second = heard[j : j + size]
-            # 两个单元必须听起来是同一个词：ASR 把「小蓝」稳定听成「小兰」时会
-            # 得到「小兰小兰」，而「小明小红」这种两个词各错一个字的不算唤醒词
-            if len(second) == size and second == first:
+            if heard[j: j + size] == unit:
                 return j + size
     return None
+
+
+def _allowed_typos(n: int) -> int:
+    """允许多少个音对不上。两个字必须全对，否则「小红」也会唤醒「小蓝」。"""
+    if n <= 2:
+        return 0
+    return 1 if n <= 5 else 2
+
+
+def _seq_distance(a: list[str], b: list[str]) -> int:
+    """音节序列的编辑距离（增 / 删 / 改各算一步）。
+
+    必须用编辑距离而不是「逐位比」：窗口长度可能是 n-1，逐位比会被 zip 截断成
+    只比前 n-1 个音节，于是「小红小红」只错一个音也能命中「小蓝小蓝」。
+    """
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
 
 
 def match(text: str, phrase: str) -> tuple[bool, str]:
@@ -94,31 +175,33 @@ def match(text: str, phrase: str) -> tuple[bool, str]:
 
     pos = heard.find(target)
     if pos >= 0:
-        return True, heard[pos + len(target) :]
+        return True, heard[pos + len(target):]
 
-    # 两个字的提示词只认精确匹配：允许错一个字的话，「小红」也会唤醒「小蓝」
-    if len(target) <= 2:
-        return False, ""
+    t_syl = _syllables(target)
+    h_syl = _syllables(heard)
+    n = len(t_syl)
+    allow = _allowed_typos(n)
 
-    # 允许少量听错字：窗口长度限制在 ±1 个字，避免只说了半个提示词就唤醒
-    allow = 1 if len(target) <= 5 else 2
-    min_size = len(target) - 1 if len(target) >= 4 else len(target)
-    best_pos, best_dist, best_size = -1, 99, len(target)
-    for size in (min_size, len(target), len(target) + 1):
-        if size < 2:
+    # 窗口长度限制在 ±1 个音节：既容忍多听 / 漏听一个字，又不至于只说了半个提示词就唤醒
+    sizes = [n] if n <= 2 else [n - 1, n, n + 1]
+    best_cost, best_pos, best_size = 99, -1, n
+    for size in sizes:
+        if size < 1:
             continue
-        for i in range(0, max(1, len(heard) - size + 1)):
-            dist = _distance(heard[i : i + size], target)
-            if dist < best_dist:
-                best_pos, best_dist, best_size = i, dist, size
-        if best_dist == 0:
+        for i in range(0, len(h_syl) - size + 1):
+            cost = _seq_distance(h_syl[i: i + size], t_syl)
+            if cost < best_cost:
+                best_cost, best_pos, best_size = cost, i, size
+            if best_cost == 0:
+                break
+        if best_cost == 0:
             break
-    if best_dist <= allow and best_pos >= 0:
-        return True, heard[best_pos + best_size :]
+    if best_pos >= 0 and best_cost <= allow:
+        return True, heard[best_pos + best_size:]
 
     unit = _repeat_unit(target)
     if unit:
-        end = _match_repeat(heard, unit)
+        end = _match_repeat(h_syl, _syllables(unit))
         if end is not None:
             return True, heard[end:]
     return False, ""
@@ -148,7 +231,7 @@ class Waker(threading.Thread):
         self.last_at = 0.0
         self.last_peak = 0.0
         self.hits = 0
-        self.state = "off"          # off / listening / error
+        self.state = "off"          # off / listening / triggered / error
         self.last_error = ""
 
     # ---------------- 控制 ----------------
@@ -159,7 +242,7 @@ class Waker(threading.Thread):
         self.recorder.clear_ring()
         self.segmenter.reset()
         self.recorder.set_monitor(True)
-        self._cursor = 0
+        self._cursor = self.recorder.latest_seq()
         self.state = "listening"
         self._enabled.set()
 
@@ -187,13 +270,13 @@ class Waker(threading.Thread):
             "threshold": round(self.segmenter.threshold, 5),
             "peak": round(self.last_peak, 4),
             "min_peak": round(self.min_peak, 4),
+            "match_mode": "同音" if HAS_PINYIN else "逐字",
         }
 
     @property
     def min_peak(self) -> float:
         """当前灵敏度下的语音能量门槛。"""
-        k = min(1.0, max(0.0, self.segmenter.sensitivity))
-        return _PEAK_AT_MIN + k * (_PEAK_AT_MAX - _PEAK_AT_MIN)
+        return min_peak(self.segmenter.sensitivity)
 
     # ---------------- 线程主体 ----------------
     def run(self) -> None:
@@ -216,7 +299,7 @@ class Waker(threading.Thread):
             time.sleep(0.05)
             return
 
-        # 配置页改了灵敏度/静音时长，这里每轮同步一次，不用重启
+        # 配置页改了灵敏度 / 静音时长，这里每轮同步一次，不用重启
         self.segmenter.configure(config.WAKE_SENSITIVITY, config.WAKE_SILENCE)
         if not config.WAKE_ENABLED or not config.WAKE_PHRASE.strip():
             self.disable()
@@ -237,7 +320,7 @@ class Waker(threading.Thread):
             # 近乎静音的片段直接扔掉：whisper 在静音上会凭空编出一整句中文，
             # 白白烧掉 150ms 显卡，还会让配置页的「最近听到」变成乱码现场。
             # 用 95 分位数而不是均值 —— 片段尾部总带着静音，均值会被稀释。
-            self.last_peak = float(np.percentile(np.abs(audio), 95))
+            self.last_peak = peak_of(audio)
             if self.last_peak < self.min_peak:
                 continue
             self._check(audio)

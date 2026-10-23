@@ -120,6 +120,17 @@ class LocalTranscriber:
             beam_size=config.ASR_BEAM_SIZE,
             condition_on_previous_text=False,
             no_speech_threshold=0.6,
+            # 先用 silero VAD 把非语音段切掉再解码。不开的话，环境噪声会被 whisper
+            # 当成「有人说话」，输出它训练集里的字幕套话（实测「请不吝点赞 订阅 转发 打赏」
+            # 反复出现），连续对话模式下就变成对着空气自说自话。
+            vad_filter=True,
+            # threshold 保持 silero 默认的 0.5：往下调（试过 0.35）确实能放行更小的声音，
+            # 但也把空调声、键盘声放进来，whisper 会把这些噪声转成整句「字幕套话」，
+            # 连续对话模式就变成对着空气自说自话 —— 这个失败模式比「小声没听清」糟得多。
+            vad_parameters={
+                "min_silence_duration_ms": 400,
+                "speech_pad_ms": 150,
+            },
             # 给个简体中文提示，能明显减少繁体/英文乱出
             initial_prompt="以下是普通话的句子。",
         )

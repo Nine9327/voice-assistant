@@ -252,11 +252,21 @@ class Speaker:
         self._player.stop()
 
     def wait_done(self, timeout: float = 120.0) -> None:
+        """等到队列清空且最后一句播放结束。
+
+        `_playing` 从「拿到任务」就算置位（不是在真正播放时），
+        否则队列被取走、合成还没开始的那几百毫秒里，wait_done 会以为说完了 ——
+        连续对话模式下直接开麦，就会把自己的播报当成用户输入，形成自问自答。
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._q.empty() and not self._playing.is_set():
                 return
             time.sleep(0.04)
+
+    @property
+    def busy(self) -> bool:
+        return bool(self._playing.is_set() or not self._q.empty())
 
     def warmup(self) -> None:
         try:
@@ -271,20 +281,19 @@ class Speaker:
             if gen != self._gen:
                 continue
             path = None
+            self._playing.set()  # 合成也是耗时环节，从这里就算「还在说话」
             try:
                 path = synthesize(text)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[TTS] 合成失败：{exc}")
-                continue
-            self._playing.set()
-            try:
+                if gen != self._gen:  # 合成期间被打断了，别再放出来
+                    continue
                 self._player.play_file(Path(path))
             except Exception as exc:  # noqa: BLE001
-                print(f"[播放] 失败：{exc}")
+                print(f"[TTS] 合成/播放失败：{exc}")
             finally:
                 self._playing.clear()
-                self._player.unload()
-                try:
-                    Path(path).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                if path is not None:
+                    self._player.unload()
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
