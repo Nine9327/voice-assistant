@@ -764,9 +764,17 @@
       </div>
 
       <div class="field">
+        <label for="APPS_ALIASES">中英文对不上？在这里补</label>
+        <textarea id="APPS_ALIASES" rows="3"
+          placeholder="谷歌浏览器、谷歌 = chrome&#10;达梦 = dm"></textarea>
+        <div class="sub">软件装的是英文名、你说的是中文名时用。左边是想说的叫法（多个用顿号隔开），
+          右边是软件名里出现的词，保存后立刻生效。内置的常见软件（Chrome、Edge、VS Code、WPS、Steam 等）已经认得，不用重复写。</div>
+      </div>
+
+      <div class="field">
         <label for="apps-test-name">试一下（会真的打开）</label>
         <div class="row">
-          <input type="text" id="apps-test-name" placeholder="打开记事本">
+          <input type="text" id="apps-test-name" placeholder="打开谷歌浏览器">
           <button class="act shrink" id="btn-apps-test">打开</button>
         </div>
         <div class="status" id="apps-test-status"></div>
@@ -1099,6 +1107,7 @@ function renderState(data) {
   $("ASR_NORMALIZE").checked = c.ASR_NORMALIZE !== false;
   $("ASR_PROMPT_MODE").value = c.ASR_PROMPT_MODE ?? "auto";
   $("ASR_HOTWORDS").value = c.ASR_HOTWORDS ?? "";
+  $("APPS_ALIASES").value = c.APPS_ALIASES ?? "";
 
   $("LLM_TEMPERATURE").value = c.LLM_TEMPERATURE ?? 0.7;
   $("LLM_TEMPERATURE-v").textContent = Number(c.LLM_TEMPERATURE ?? 0.7).toFixed(1);
@@ -2073,6 +2082,7 @@ $("btn-save").addEventListener("click", async () => {
     ASR_NORMALIZE: $("ASR_NORMALIZE").checked,
     ASR_PROMPT_MODE: $("ASR_PROMPT_MODE").value,
     ASR_HOTWORDS: $("ASR_HOTWORDS").value.trim(),
+    APPS_ALIASES: $("APPS_ALIASES").value.trim(),
     MIN_RECORD_SECONDS: $("MIN_RECORD_SECONDS").value,
     MAX_RECORD_SECONDS: $("MAX_RECORD_SECONDS").value,
     WEB_PORT: $("WEB_PORT").value,

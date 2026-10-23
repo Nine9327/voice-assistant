@@ -91,11 +91,12 @@ def build_initial_prompt(model_size: str) -> str:
         add(phrase)
     for word in _split_words(config.ASR_HOTWORDS or ""):
         add(word)
-    # 本机装着的应用名，正好是「打开 XX」里最容易听错的部分
+    # 本机装着的应用名，正好是「打开 XX」里最容易听错的部分。
+    # 中文叫法比英文名更重要 —— 用户说的是「谷歌浏览器」，软件叫 Google Chrome。
     try:
         import apps
 
-        for label in apps.labels(limit=25):
+        for label in apps.labels(limit=40, with_aliases=True):
             add(label)
     except Exception:  # noqa: BLE001
         pass

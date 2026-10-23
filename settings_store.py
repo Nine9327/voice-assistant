@@ -157,6 +157,11 @@ SCHEMA: dict[str, dict[str, Any]] = {
 
     # ---------- 本机指令 ----------
     "APPS_ENABLED": {"type": "bool", "label": "语音打开应用", "group": "apps"},
+    "APPS_ALIASES": {
+        "type": "text", "label": "应用别名", "group": "apps",
+        "placeholder": "谷歌浏览器、谷歌 = chrome\n达梦 = dm",
+        "hint": "软件装的是英文名、你说中文名时用。左边是想说的叫法，右边是软件名里出现的词。",
+    },
 
     # ---------- MCP 工具 ----------
     "MCP_ENABLED": {"type": "bool", "label": "启用 MCP 工具", "group": "mcp"},
@@ -200,7 +205,7 @@ def coerce(key: str, value: Any) -> Any:
         if text not in spec["choices"]:
             raise ConfigError(f"{key} 只能是 {spec['choices']} 之一，收到 {text!r}")
         return text
-    if kind in ("str", "secret"):
+    if kind in ("str", "secret", "text"):
         text = "" if value is None else str(value)
         text = text.strip()
         if spec.get("label") and len(text) > 2048:

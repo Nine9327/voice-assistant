@@ -61,6 +61,95 @@ _BUILTIN: list[tuple[tuple[str, ...], str, str]] = [
     (("邮件", "邮箱"), "outlookmail:", "邮件"),
 ]
 
+# 中文叫法 → 本机英文名。
+#
+# 这是「说谷歌浏览器、装的是 Google Chrome」这类问题的正解：开始菜单里只会写
+# 英文名，而人说的是中文。左边的键在本机软件名里做子串匹配（比较前会 normalize，
+# 所以空格和大小写都不影响），命中就把右边的中文叫法加进这个软件的别名。
+#
+# 只收真正会被用中文念出来的软件；键要够长，避免「code」这种到处都有的词乱点鸳鸯。
+_BRAND: list[tuple[str, tuple[str, ...]]] = [
+    # 浏览器
+    ("chrome", ("谷歌浏览器", "谷歌", "古狗浏览器", "chrome浏览器")),
+    ("firefox", ("火狐浏览器", "火狐")),
+    ("microsoftedge", ("微软浏览器", "edge浏览器", "微软edge")),
+    ("opera", ("欧朋浏览器", "欧朋")),
+    ("qqbrowser", ("qq浏览器",)),
+    ("360chrome", ("360浏览器", "三六零浏览器")),
+    ("sogouexplorer", ("搜狗浏览器",)),
+    ("brave", ("brave浏览器",)),
+    # 开发
+    ("visualstudiocode", ("vscode", "vs code", "vs", "代码编辑器", "写代码")),
+    ("intellij", ("idea",)),
+    ("androidstudio", ("安卓开发工具",)),
+    ("notepad++", ("notepad加加",)),
+    ("sublime", ("sublime文本",)),
+    ("docker", ("容器工具",)),
+    ("navicat", ("数据库工具",)),
+    ("apifox", ("接口工具",)),
+    ("wsl", ("linux子系统", "子系统")),
+    # 办公
+    ("winword", ("word", "word文档", "文档")),
+    ("excel", ("excel表格", "表格", "电子表格")),
+    ("powerpnt", ("ppt", "幻灯片", "演示文稿")),
+    ("wps", ("金山办公", "wps办公", "办公软件")),
+    ("onenote", ("onenote", "笔记软件")),
+    ("outlook", ("邮件客户端",)),
+    ("foxmail", ("邮件客户端",)),
+    ("dingtalk", ("钉钉",)),
+    ("feishu", ("飞书",)),
+    ("wemeet", ("腾讯会议", "会议软件")),
+    ("zoom", ("会议软件",)),
+    # 设计与媒体
+    ("photoshop", ("ps", "修图软件", "图片处理")),
+    ("illustrator", ("矢量软件",)),
+    ("premiere", ("pr", "视频剪辑", "剪辑软件")),
+    ("aftereffects", ("ae", "特效软件")),
+    ("lightroom", ("调色软件",)),
+    ("sketchup", ("草图大师",)),
+    ("3dsmax", ("建模软件",)),
+    ("autocad", ("cad", "制图软件")),
+    ("obs", ("录屏软件", "录屏")),
+    ("potplayer", ("播放器", "视频播放器")),
+    ("vlc", ("vlc播放器",)),
+    ("cloudmusic", ("网易云音乐", "音乐")),
+    ("qqmusic", ("qq音乐", "音乐")),
+    ("kugou", ("酷狗音乐", "音乐")),
+    ("kuwo", ("酷我音乐", "音乐")),
+    ("xunlei", ("迅雷", "下载工具")),
+    ("thunder", ("迅雷", "下载工具")),
+    ("motrix", ("下载器",)),
+    # 系统与工具
+    ("everything", ("文件搜索",)),
+    ("bandizip", ("解压软件", "压缩软件")),
+    ("winrar", ("解压软件", "压缩软件")),
+    ("7-zip", ("解压软件", "压缩软件")),
+    ("teamviewer", ("远程控制",)),
+    ("sunlogin", ("向日葵", "远程控制")),
+    ("todesk", ("远程控制",)),
+    ("steam", ("蒸汽平台", "游戏平台")),
+    ("epicgames", ("epic平台", "游戏平台")),
+    ("wegame", ("腾讯游戏平台", "游戏平台")),
+    ("vmware", ("虚拟机",)),
+    ("virtualbox", ("虚拟机",)),
+    ("baidunetdisk", ("百度网盘", "网盘")),
+    ("telegram", ("电报",)),
+]
+
+# 泛称：只说类别不说牌子。装了多个时按这里写的顺序挑，所以顺序即偏好。
+_CATEGORY: dict[str, tuple[str, ...]] = {
+    "浏览器": ("chrome", "firefox", "microsoftedge", "qqbrowser", "360chrome", "opera"),
+    "网页": ("chrome", "microsoftedge"),
+    "音乐": ("cloudmusic", "qqmusic", "kugou", "kuwo"),
+    "播放器": ("potplayer", "vlc", "windowsmediaplayer"),
+    "解压": ("bandizip", "winrar", "7-zip"),
+    "压缩": ("bandizip", "winrar", "7-zip"),
+    "下载": ("xunlei", "thunder", "motrix"),
+    "虚拟机": ("vmware", "virtualbox"),
+    "录屏": ("obs",),
+    "远程": ("todesk", "sunlogin", "teamviewer"),
+}
+
 # 强动词：意图明确，就算找不到应用也该回一句「没找到」，
 # 而不是丢给大模型去发挥。
 _STRONG = re.compile(
@@ -124,6 +213,45 @@ def _sound_key(text: str) -> str:
     return "".join(_fuzz(s) for s in _syllables(normalize(text)))
 
 
+def _user_brand() -> list[tuple[str, tuple[str, ...]]]:
+    """用户自己补的别名，格式每行一条：中文叫法 = 软件名里的关键词。
+
+    例：
+        谷歌浏览器、谷歌 = chrome
+        达梦 = dm
+    左边是说的话（可以写多个，用顿号或逗号分开），右边是本机软件名里出现的词。
+    内置表不可能覆盖所有人装的东西，这张表就是留给「我这台机器上的软件叫英文名」的。
+    """
+    raw = str(getattr(config, "APPS_ALIASES", "") or "")
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for line in raw.replace("：", ":").replace("＝", "=").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        sep = "=" if "=" in line else (":" if ":" in line else "")
+        if not sep:
+            continue
+        left, right = line.split(sep, 1)
+        names = tuple(x.strip() for x in re.split(r"[、,，/|]+", left) if x.strip())
+        keyword = right.strip()
+        if names and keyword:
+            out.append((keyword, names))
+    return out
+
+
+def brand_aliases(label: str) -> list[str]:
+    """这个软件名能对应上哪些中文叫法。内置表 + 用户表一起查。"""
+    key = normalize(label)
+    if not key:
+        return []
+    out: list[str] = []
+    for keyword, names in _BRAND + _user_brand():
+        probe = normalize(keyword)
+        if probe and probe in key:
+            out.extend(names)
+    return out
+
+
 def parse_open(text: str) -> tuple[str, bool] | None:
     """从一句话里取应用名。
 
@@ -161,6 +289,7 @@ class Entry:
 
 _index: list[Entry] | None = None
 _index_at = 0.0
+_index_sig = ""
 
 
 def _start_menu_roots() -> list[Path]:
@@ -179,8 +308,11 @@ def _load_bound() -> list[Entry]:
     for root in _start_menu_roots():
         try:
             for lnk in root.rglob("*.lnk"):
-                # 显示名就用快捷方式文件名，这是用户在开始菜单里看到的那个
-                entries.append(Entry(lnk.stem, str(lnk), "lnk", [lnk.stem]))
+                # 显示名就用快捷方式文件名，这是用户在开始菜单里看到的那个。
+                # 同时补上中文叫法 —— 装的是 Google Chrome，人说的是「谷歌浏览器」。
+                entries.append(
+                    Entry(lnk.stem, str(lnk), "lnk", [lnk.stem, *brand_aliases(lnk.stem)])
+                )
         except OSError:
             continue
     return entries
@@ -199,7 +331,7 @@ def _startapps() -> list[Entry]:
                 data = json.loads(CACHE_FILE.read_text(encoding="utf-8-sig"))
                 return [
                     Entry(d.get("name", ""), d.get("appid", ""), "startapp",
-                          [d.get("name", "")])
+                          [d.get("name", ""), *brand_aliases(d.get("name", ""))])
                     for d in data
                     if d.get("name") and d.get("appid")
                 ]
@@ -241,25 +373,32 @@ def _startapps() -> list[Entry]:
     except OSError:
         pass
     return [
-        Entry(r["name"], r["appid"], "startapp", [r["name"]])
+        Entry(r["name"], r["appid"], "startapp", [r["name"], *brand_aliases(r["name"])])
         for r in rows
         if r["name"] and r["appid"]
     ]
 
 
 def _get_index(refresh: bool = False) -> list[Entry]:
-    global _index, _index_at
-    if _index is None or refresh or time.time() - _index_at > 3600:
+    global _index, _index_at, _index_sig
+    # 别名是写进索引里的，所以自定义别名一改就必须重建，否则改了看不到效果
+    sig = str(getattr(config, "APPS_ALIASES", "") or "")
+    if (_index is None or refresh or sig != _index_sig
+            or time.time() - _index_at > 3600):
         _index = _load_bound()
         _index_at = time.time()
+        _index_sig = sig
     return _index
 
 
-def labels(limit: int = 25) -> list[str]:
+def labels(limit: int = 25, with_aliases: bool = False) -> list[str]:
     """本机认得的程序名，取前若干个。
 
     给识别模块的「领域词提示」用：这些恰恰是「打开 XX」里最容易听错的字。
     索引本身会缓存一小时，重复调用不扫盘。
+
+    with_aliases=True 时把中文叫法也带上 —— 用户说的是「谷歌浏览器」，
+    光把「Google Chrome」塞给识别模型没多大用。
     """
     try:
         entries = _get_index()
@@ -267,14 +406,26 @@ def labels(limit: int = 25) -> list[str]:
         return []
     out: list[str] = []
     seen: set[str] = set()
+
+    def _add(value: str) -> bool:
+        value = (value or "").strip()
+        if not value or value.lower() in seen:
+            return False
+        seen.add(value.lower())
+        out.append(value)
+        return len(out) >= limit
+
     for entry in entries:
-        name = (entry.label or "").strip()
-        if not name or name in seen:
+        if _add(entry.label):
+            return out
+        if not with_aliases:
             continue
-        seen.add(name)
-        out.append(name)
-        if len(out) >= limit:
-            break
+        for alias in sorted(entry.keys):
+            # 只收中文别名：英文的跟软件名重复，白占提示词的位置
+            if not any("\u4e00" <= ch <= "\u9fff" for ch in alias):
+                continue
+            if _add(alias):
+                return out
     return out
 
 
@@ -294,7 +445,10 @@ def find(name: str, deep: bool = True) -> Entry | None:
     entry = _match(name, _get_index())
     if entry is not None or not deep:
         return entry
-    return _match(name, _startapps())
+    entry = _match(name, _startapps())
+    if entry is not None:
+        return entry
+    return find_category(name)          # 「打开浏览器」这种只说了类别的
 
 
 def _match(name: str, entries: list[Entry]) -> Entry | None:
@@ -313,6 +467,11 @@ def _match(name: str, entries: list[Entry]) -> Entry | None:
         if key in entry.keys:
             return entry
     # 3) 包含关系：优先短的，避免「记事本」被「记事本快捷方式」抢走
+    #
+    # 太短的英文名不走这一步：「ps」会被 PowerShell 抢走，「ai」能套中一堆词。
+    # 短词只认上面第 2 步的精确别名 —— 真装了 Photoshop，它的别名里就有「ps」。
+    if key.isascii() and len(key) < 3:
+        return None
     best: Entry | None = None
     best_len = 999
     for entry in entries:
@@ -324,15 +483,66 @@ def _match(name: str, entries: list[Entry]) -> Entry | None:
     return best
 
 
+def find_category(name: str) -> Entry | None:
+    """「打开浏览器」「来个播放器」—— 只说了类别没说牌子。
+
+    按 _CATEGORY 里写的偏好顺序在本机找，找到第一个装了的就算数。
+    这是最后一道兜底：只有在按名字怎么都找不到之后才试，避免抢走具体名字的匹配。
+    """
+    key = normalize(name)
+    if not key:
+        return None
+    for word, keywords in _CATEGORY.items():
+        if key != normalize(word):
+            continue
+        for keyword in keywords:
+            probe = normalize(keyword)
+            if not probe:
+                continue
+            for entry in _get_index():
+                if probe in normalize(entry.label):
+                    return entry
+    return None
+
+
+def suggest(name: str) -> str | None:
+    """找不着的时候，本机有没有名字相近的？给语音留一句「是不是想开 XX」。
+
+    只在彻底找不到时才调，可以放心用 difflib 慢慢比。阈值卡得比较紧：
+    这句子是要念出来给用户听的，猜错比沉默更糟，宁可不说。
+    （实测 0.62 会把「ggogle浏览器」提示成 Edge，0.7 才不会乱点鸳鸯。）
+    """
+    import difflib
+
+    key = normalize(name)
+    if len(key) < 2:
+        return None
+    best: str | None = None
+    best_ratio = 0.0
+    for entry in _get_index():
+        for k in entry.keys:
+            if len(k) < 2:
+                continue
+            ratio = difflib.SequenceMatcher(None, key, k).ratio()
+            if ratio > best_ratio:
+                best, best_ratio = entry.label, ratio
+    return best if best_ratio >= 0.7 else None
+
+
 def open_app(name: str, entry: Entry | None = None) -> dict:
     """按名字启动。返回 {ok, app, way, say, error}，say 是给 TTS 念的一句话。"""
     if entry is None:
         entry = find(name)
     if entry is None:
+        near = suggest(name)
+        say = f"没找到叫{name}的应用。"
+        if near is not None:
+            say = f"没找到叫{name}的应用，本机有{near}，要打开吗？"
         return {
             "ok": False,
             "app": name,
-            "say": f"没找到叫{name}的应用。",
+            "near": near or "",
+            "say": say,
             "error": "没有匹配的应用",
         }
     ok, error = _launch(entry)

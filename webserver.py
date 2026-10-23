@@ -547,6 +547,15 @@ class _Handler(BaseHTTPRequestHandler):
             return None
 
         touched = set(changed)
+        # 应用别名会进识别提示词（本机程序名是「打开 XX」里最容易听错的字），
+        # 改了就得让缓存里的提示词失效，否则五分钟内还是旧的
+        if "APPS_ALIASES" in touched:
+            try:
+                import asr
+
+                asr._prompt_cache.clear()
+            except Exception:  # noqa: BLE001
+                pass
         need = bool(touched & ASR_RELOAD_KEYS)
         if not need and config.ASR_PROVIDER == "openai" and touched & ASR_SHARED_KEYS:
             need = True  # 网络识别复用了大模型的地址和 Key
