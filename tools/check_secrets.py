@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BLOCKED_PATHS = [
     (re.compile(r"(^|/)settings\.json$"), "本地配置文件（含 API Key）"),
     (re.compile(r"(^|/)settings\.json\..+$"), "本地配置的临时/备份文件"),
+    (re.compile(r"(^|/)mcp\.json$"), "MCP 服务器清单（可能含 token）"),
     (re.compile(r"\.bak$"), "备份文件"),
     (re.compile(r"(^|/)\.env(\..+)?$"), "环境变量文件"),
     (re.compile(r"(^|/)\.runtime/"), "运行期数据（pid / 日志 / 截图）"),

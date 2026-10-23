@@ -130,6 +130,19 @@ SCHEMA: dict[str, dict[str, Any]] = {
 
     # ---------- 本机指令 ----------
     "APPS_ENABLED": {"type": "bool", "label": "语音打开应用", "group": "apps"},
+
+    # ---------- MCP 工具 ----------
+    "MCP_ENABLED": {"type": "bool", "label": "启用 MCP 工具", "group": "mcp"},
+    "MCP_MAX_ROUNDS": {
+        "type": "int", "min": 0, "max": 6, "label": "最多调用轮数", "group": "mcp",
+    },
+    "MCP_TIMEOUT": {
+        "type": "float", "min": 3.0, "max": 120.0, "step": 1.0,
+        "label": "工具超时", "group": "mcp",
+    },
+    "MCP_MAX_TOOLS": {
+        "type": "int", "min": 1, "max": 64, "label": "工具上限", "group": "mcp",
+    },
 }
 
 SECRET_KEYS = {k for k, v in SCHEMA.items() if v.get("type") == "secret"}

@@ -61,6 +61,13 @@ WAKE_SESSION_SECONDS = 20         # 唤醒后保持对话的时长：这段时�
 # ---------------- 本机指令 ----------------
 APPS_ENABLED = True               # 说「打开微信」直接执行，不绕大模型
 
+# ---------------- MCP 工具 ----------------
+MCP_ENABLED = True                # 允许模型调用 MCP 服务器暴露的工具
+MCP_CONFIG_FILE = "mcp.json"      # 服务器清单；含 token，已在 .gitignore 排除
+MCP_MAX_ROUNDS = 3                # 一轮对话里最多「调工具→再想」几轮，防死循环
+MCP_TIMEOUT = 20                  # 单次工具调用超时（秒）
+MCP_MAX_TOOLS = 24                # 最多把几个工具塞进提示词：7B 模型上下文有限
+
 # ---------------- 联网搜索 ----------------
 SEARCH_MODE = "auto"              # off=从不联网 / auto=按问题判断（推荐）/ always=每次都查
 SEARCH_BACKEND = "bing"           # bing=必应（免 key，国内直连）/ tavily / bocha / searx

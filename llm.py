@@ -275,26 +275,168 @@ def _compose(history: list[dict], extra_context: str = "") -> list[dict]:
     return msgs + extras
 
 
-def stream_reply(history: list[dict], extra_context: str = "") -> Iterator[str]:
-    """逐 token 产出模型输出。按当前服务自动分发。"""
+def stream_reply(
+    history: list[dict],
+    extra_context: str = "",
+    tools: list[dict] | None = None,
+    on_tool=None,
+    on_event=None,
+) -> Iterator[str]:
+    """逐 token 产出模型输出。按当前服务自动分发。
+
+    带了 tools 且给了 on_tool 时进入工具循环：模型要求调工具 → 本地执行 → 结果
+    回填 → 再请它回答，最多 MCP_MAX_ROUNDS 轮。只有文本会 yield 出去，
+    上层（assistant.py）感知不到中间多了几次往返。
+    """
     messages = _compose(history, extra_context)
+    max_rounds = max(0, int(getattr(config, "MCP_MAX_ROUNDS", 3) or 0))
+    active: list[dict] = list(tools or []) if on_tool is not None else []
+    round_no = 0
+
+    while True:
+        use_tools = active if (active and round_no < max_rounds) else None
+        calls: list[dict] = []
+        try:
+            for kind, payload in _round(messages, use_tools, calls):
+                if kind == "text":
+                    yield payload
+        except LLMError as exc:
+            # 模型或服务端不认 tools 参数时，不能因为一个可选能力把整轮对话搞挂
+            if use_tools and _is_tool_error(exc):
+                if on_event is not None:
+                    on_event("tools_unsupported", {"error": str(exc)})
+                active = []
+                round_no = 0
+                continue
+            raise
+
+        if not calls or on_tool is None:
+            return
+
+        calls = _dedupe(calls)
+        results: list[str] = []
+        for call in calls:
+            name = call["name"]
+            if on_event is not None:
+                on_event("tool_start", {"name": name})
+            t0 = time.perf_counter()
+            try:
+                text = on_tool(name, call["arguments"])
+            except Exception as exc:  # noqa: BLE001
+                text = f"调用 {name} 出错：{type(exc).__name__}: {exc}"
+            results.append(text)
+            if on_event is not None:
+                on_event(
+                    "tool_end",
+                    {
+                        "name": name,
+                        "ms": (time.perf_counter() - t0) * 1000,
+                        "chars": len(text),
+                    },
+                )
+
+        _append_round(messages, calls, results)
+        round_no += 1
+
+
+def _dedupe(calls: list[dict]) -> list[dict]:
+    """流式响应里同一个 tool_call 可能被重复吐出，按「名字+参数」去重。"""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for call in calls:
+        key = (call["name"], json.dumps(call["arguments"], ensure_ascii=False, sort_keys=True))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(call)
+    return out
+
+
+def _append_round(messages: list[dict], calls: list[dict], results: list[str]) -> None:
+    """把「助手要调工具」和「工具返回了什么」写回临时消息列表。
+
+    写的是本次对话的副本，不是 history —— 工具原文不该长期占着上下文，
+    下一轮用户问新问题时还带着上一条网页全文只会干扰判断。
+    """
     if config.LLM_PROVIDER == "openai":
-        yield from _stream_openai(messages)
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": c["id"] or f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": c["name"],
+                            "arguments": c["arguments_raw"]
+                            or json.dumps(c["arguments"], ensure_ascii=False),
+                        },
+                    }
+                    for i, c in enumerate(calls)
+                ],
+            }
+        )
+        for i, (call, text) in enumerate(zip(calls, results)):
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"] or f"call_{i}",
+                    "content": text,
+                }
+            )
     else:
-        yield from _stream_ollama(messages)
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": c["name"], "arguments": c["arguments"]}}
+                    for c in calls
+                ],
+            }
+        )
+        for call, text in zip(calls, results):
+            messages.append({"role": "tool", "content": text, "tool_name": call["name"]})
 
 
-def _stream_ollama(history: list[dict]) -> Iterator[str]:
+def _parse_args(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {"value": value}
+
+
+def _is_tool_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "tool" in text or "function" in text
+
+
+def _round(messages: list[dict], tools: list[dict] | None, calls: list[dict]):
+    """跑一轮请求，产出 ("text", 片段)；顺带把工具调用塞进 calls。"""
+    if config.LLM_PROVIDER == "openai":
+        return _round_openai(messages, tools, calls)
+    return _round_ollama(messages, tools, calls)
+
+
+def _round_ollama(messages: list[dict], tools: list[dict] | None, calls: list[dict]):
     base = config.OLLAMA_HOST.rstrip("/")
     payload = {
         "model": config.LLM_MODEL,
-        "messages": history,
+        "messages": messages,
         "stream": True,
         "options": {
             "temperature": config.LLM_TEMPERATURE,
             "num_ctx": config.LLM_NUM_CTX,
         },
     }
+    if tools:
+        payload["tools"] = tools
     try:
         with _stream("POST", f"{base}/api/chat", json=payload, timeout=TIMEOUT) as resp:
             if resp.status_code != 200:
@@ -309,23 +451,41 @@ def _stream_ollama(history: list[dict]) -> Iterator[str]:
                     continue
                 if data.get("error"):
                     raise LLMError(str(data["error"]))
-                content = (data.get("message") or {}).get("content") or ""
+                message = data.get("message") or {}
+                content = message.get("content") or ""
                 if content:
-                    yield content
+                    yield ("text", content)
+                for call in message.get("tool_calls") or []:
+                    fn = call.get("function") or {}
+                    if not fn.get("name"):
+                        continue
+                    raw = fn.get("arguments")
+                    calls.append(
+                        {
+                            "id": "",
+                            "name": str(fn["name"]),
+                            "arguments": _parse_args(raw),
+                            "arguments_raw": raw if isinstance(raw, str) else "",
+                        }
+                    )
                 if data.get("done"):
                     break
     except httpx.HTTPError as exc:
         raise LLMError(f"请求大模型失败：{exc}") from exc
 
 
-def _stream_openai(history: list[dict]) -> Iterator[str]:
+def _round_openai(messages: list[dict], tools: list[dict] | None, calls: list[dict]):
     url = config.OPENAI_BASE.rstrip("/") + "/chat/completions"
     payload = {
         "model": config.OPENAI_MODEL,
-        "messages": history,
+        "messages": messages,
         "stream": True,
         "temperature": config.LLM_TEMPERATURE,
     }
+    if tools:
+        payload["tools"] = tools
+    # 流式返回时 tool_calls 是分片下发的，按 index 累积成完整调用
+    acc: dict[int, dict] = {}
     try:
         with _stream(
             "POST", url, json=payload, headers=auth_header(), timeout=TIMEOUT
@@ -349,11 +509,37 @@ def _stream_openai(history: list[dict]) -> Iterator[str]:
                 choices = data.get("choices") or []
                 if not choices:
                     continue
-                content = (choices[0].get("delta") or {}).get("content") or ""
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content") or ""
                 if content:
-                    yield content
+                    yield ("text", content)
+                for part in delta.get("tool_calls") or []:
+                    idx = int(part.get("index") or 0)
+                    slot = acc.setdefault(
+                        idx, {"id": "", "name": "", "arguments": ""}
+                    )
+                    if part.get("id"):
+                        slot["id"] = str(part["id"])
+                    fn = part.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] = (slot["name"] + fn["name"]) if slot["name"] else fn["name"]
+                    if fn.get("arguments"):
+                        slot["arguments"] += str(fn["arguments"])
     except httpx.HTTPError as exc:
         raise LLMError(f"请求大模型失败：{exc}") from exc
+
+    for idx in sorted(acc):
+        slot = acc[idx]
+        if not slot["name"]:
+            continue
+        calls.append(
+            {
+                "id": slot["id"],
+                "name": slot["name"],
+                "arguments": _parse_args(slot["arguments"]),
+                "arguments_raw": slot["arguments"],
+            }
+        )
 
 
 # --------------------------------------------------------------------------

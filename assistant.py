@@ -56,6 +56,7 @@ _ensure_streams()
 import apps  # noqa: E402
 import config  # noqa: E402
 import llm  # noqa: E402
+import mcp_tools  # noqa: E402
 import search  # noqa: E402
 from rich.console import Console  # noqa: E402
 from rich.panel import Panel  # noqa: E402
@@ -345,6 +346,28 @@ def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None
     pieces: list[str] = []
     first_token_at: float | None = None
 
+    # MCP 工具：模型自己要调外部能力时才有往返，没配服务器时这里就是空列表
+    hub = mcp_tools.hub() if getattr(config, "MCP_ENABLED", True) else None
+    tools: list[dict] = []
+    if hub is not None:
+        hub.ensure_started()
+        tools = hub.tool_specs()
+
+    def on_event(kind: str, info: dict) -> None:
+        if kind == "tool_start":
+            console.print(f"\n[dim]· 调用 {info.get('name')}[/dim]")
+            if live is not None:
+                live.update(note=f"正在用 {info.get('name')}…")
+        elif kind == "tool_end":
+            console.print(
+                f"[dim]· 返回 {info.get('chars')} 字"
+                f"（{info.get('ms', 0):.0f}ms）[/dim]"
+            )
+            if live is not None:
+                live.update(note="")
+        elif kind == "tools_unsupported":
+            console.print("[yellow]当前模型不支持工具调用，这轮按普通对话回答[/yellow]")
+
     extra_context = ""
     question = ""
     for msg in reversed(history):
@@ -382,7 +405,13 @@ def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None
 
     t0 = time.perf_counter()
 
-    for chunk in llm.stream_reply(history, extra_context=extra_context):
+    for chunk in llm.stream_reply(
+        history,
+        extra_context=extra_context,
+        tools=tools,
+        on_tool=hub.call if hub is not None else None,
+        on_event=on_event if tools else None,
+    ):
         if first_token_at is None:
             first_token_at = time.perf_counter() - t0
         pieces.append(chunk)
@@ -452,6 +481,13 @@ def preflight() -> None:
     if llm.ensure_running():
         console.print("[dim]已自动启动 Ollama[/dim]")
     llm.ensure_model()
+    # MCP 服务器在后台连，冷启动时 npx 可能要下包，不能让它挡住开机
+    if getattr(config, "MCP_ENABLED", True):
+        hub = mcp_tools.hub()
+        hub.ensure_started()
+        names = [s["name"] for s in mcp_tools.load_servers() if s.get("enabled", True)]
+        if names:
+            console.print(f"[dim]MCP 工具后台连接中：{'、'.join(names)}[/dim]")
     try:
         import sounddevice as sd
 
@@ -636,11 +672,19 @@ def main() -> None:
         return {"ok": True}
 
     def on_config_changed(changed: list[str]) -> dict | None:
-        """配置页保存后回调，把唤醒相关的开关立刻落到正在跑的线程上。
+        """配置页保存后回调，把开关立刻落到正在跑的线程上。
 
         没有它的话，页面打开唤醒开关要等到「下一轮对话结束」才生效 ——
         而用户正是在空闲时才去改这个设置，等于永远不生效。
         """
+        if {"MCP_ENABLED", "MCP_MAX_TOOLS"} & set(changed):
+            # 关掉时要真的把子进程收掉，否则工具服务器还在后台跑；
+            # 打开或改预算就全量重连（ensure_started 只管首次启动，收了进程再叫它没用）
+            hub = mcp_tools.hub()
+            if not config.MCP_ENABLED:
+                hub.stop_all()
+            else:
+                threading.Thread(target=hub.reload, name="mcp-reload", daemon=True).start()
         if waker is None:
             return {"state": "off", "enabled": False, "detail": "本次启动没加载唤醒线程"}
         if not config.WAKE_ENABLED or not config.WAKE_PHRASE.strip():
@@ -667,6 +711,9 @@ def main() -> None:
         if web is None:
             console.print("[red]配置页没能启动，无法进入仅配置模式[/red]")
             return
+        # 仅配置模式下也要连一次 MCP，否则页面上永远显示「未连接」
+        if getattr(config, "MCP_ENABLED", True):
+            mcp_tools.hub().ensure_started()
         console.print("[dim]仅配置模式：只提供网页配置，不占麦克风、不加载模型。Ctrl+C 退出[/dim]")
         wait_forever(web)
         return

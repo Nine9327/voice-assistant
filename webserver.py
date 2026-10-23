@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import config
 import llm
+import mcp_tools
 import settings_store
 import tts
 
@@ -213,6 +214,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_apps(query)
         elif path == "/api/apps/open":
             self._handle_apps_open(query)
+        elif path == "/api/mcp":
+            self._json(self._mcp_payload())
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -328,6 +331,65 @@ class _Handler(BaseHTTPRequestHandler):
         result["kind"] = entry.kind if entry else ""
         self._json(result)
 
+    # ---------------- MCP ----------------
+    def _mcp_payload(self) -> dict:
+        """配置 + 运行状态一起给：页面左边填命令，右边看连没连通。"""
+        try:
+            servers = mcp_tools.load_servers()
+            error = ""
+        except mcp_tools.McpError as exc:
+            servers, error = [], str(exc)
+        hub = mcp_tools.hub()
+        return {
+            "ok": True,
+            "servers": servers,
+            "status": {s["name"]: s for s in hub.status()},
+            "summary": hub.summary(),
+            "presets": mcp_tools.presets(),
+            "path": str(mcp_tools.config_path()),
+            "error": error,
+        }
+
+    def _handle_mcp_save(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        servers = payload.get("servers")
+        if not isinstance(servers, list):
+            self._error("servers 必须是数组")
+            return
+        try:
+            clean = mcp_tools.save_servers(servers)
+        except (mcp_tools.McpError, OSError) as exc:
+            self._error(str(exc))
+            return
+
+        # 重连可能要几十秒（npx 冷启动），不能卡住这次请求
+        hub = mcp_tools.hub()
+        if config.MCP_ENABLED:
+            threading.Thread(target=hub.reload, name="mcp-reload", daemon=True).start()
+        else:
+            hub.stop_all()
+        self._json({"ok": True, "servers": clean, "reloading": config.MCP_ENABLED})
+
+    def _handle_mcp_test(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        server = payload.get("server")
+        if not isinstance(server, dict):
+            self._error("缺少 server 对象")
+            return
+        self._json(mcp_tools.test_server(server))
+
+    def _handle_mcp_reconnect(self) -> None:
+        hub = mcp_tools.hub()
+        if not config.MCP_ENABLED:
+            self._error("MCP 总开关是关的，先在页面上打开")
+            return
+        threading.Thread(target=hub.reload, name="mcp-reload", daemon=True).start()
+        self._json({"ok": True, "reloading": True})
+
     # ---------------- POST ----------------
     def do_POST(self) -> None:
         path = urlparse(self.path).path
@@ -346,6 +408,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_pet_trigger()
         elif path == "/api/pet/quit":
             self._handle_quit()
+        elif path == "/api/mcp/save":
+            self._handle_mcp_save()
+        elif path == "/api/mcp/test":
+            self._handle_mcp_test()
+        elif path == "/api/mcp/reconnect":
+            self._handle_mcp_reconnect()
         else:
             self._error("没有这个地址", 404)
 
@@ -598,6 +666,7 @@ class ConfigServer:
             "uptime": round(time.time() - self._started_at),
             "llm": _llm_status(),
             "gpu": _gpu(),
+            "mcp": mcp_tools.hub().summary(),
             "settings_file": str(settings_store.PATH),
             "settings_exists": settings_store.PATH.exists(),
         }
