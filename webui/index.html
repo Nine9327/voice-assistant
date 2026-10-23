@@ -347,6 +347,107 @@
       <div class="note">桌面形象是独立进程：双击 <code>start.vbs</code> 一起启动；右键点它可以打开本页或退出程序。</div>
     </section>
 
+    <!-- 联网搜索 -->
+    <section class="card">
+      <h2>联网搜索 <span class="badge" id="search-badge">—</span></h2>
+      <p class="hint">问天气、新闻、股价这类「此刻才成立」的事，先去网上查一段再回答，而不是让本地模型硬编。</p>
+
+      <div class="field">
+        <label>什么时候查</label>
+        <div class="seg" data-target="SEARCH_MODE">
+          <button type="button" data-value="off">关闭</button>
+          <button type="button" data-value="auto">按问题判断</button>
+          <button type="button" data-value="always">每次都查</button>
+        </div>
+        <div class="note" style="margin-top:10px">
+          按问题判断：出现「今天/最新/股价/天气/新闻」这类时效词，或者「帮我查一下」这种明确要求时才查，
+          闲聊不查。「现在几点」「今天周几」由本地时间直接回答，不会浪费一次搜索。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>搜索服务</label>
+        <div class="seg" data-target="SEARCH_BACKEND">
+          <button type="button" data-value="bing">必应</button>
+          <button type="button" data-value="tavily">Tavily</button>
+          <button type="button" data-value="bocha">博查</button>
+          <button type="button" data-value="searx">SearXNG</button>
+        </div>
+        <div class="note" style="margin-top:10px">必应免 Key、国内可直连，够用就别换。Tavily 和博查的摘要更贴合大模型，但都要自己申请 Key。</div>
+      </div>
+
+      <div data-group="search-key">
+        <div class="field">
+          <label for="SEARCH_KEY">API Key</label>
+          <input type="password" id="SEARCH_KEY" placeholder="粘贴服务商给的 Key" autocomplete="off">
+          <div class="note" id="SEARCH_KEY-note">保存后只显示末四位；留空表示沿用原来的。</div>
+        </div>
+      </div>
+
+      <div data-group="search-searx">
+        <div class="field">
+          <label for="SEARCH_ENDPOINT">SearXNG 实例地址</label>
+          <input type="text" id="SEARCH_ENDPOINT" placeholder="http://127.0.0.1:8888">
+          <div class="note">实例要允许 JSON 输出（settings.yml 里 <code>search.formats</code> 含 <code>json</code>）。</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>结果条数（喂给模型几条网页摘要）</label>
+        <div class="inline">
+          <input type="range" id="SEARCH_RESULTS" min="1" max="10" step="1">
+          <span class="val" id="SEARCH_RESULTS-v">5</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>搜索超时</label>
+        <div class="inline">
+          <input type="range" id="SEARCH_TIMEOUT" min="2" max="30" step="1">
+          <span class="val" id="SEARCH_TIMEOUT-v">6s</span>
+        </div>
+        <div class="note">超时就当没查到，照常回答，不会卡住整轮对话。</div>
+      </div>
+
+      <div class="field">
+        <label for="search-test-q">试搜一句</label>
+        <div class="row">
+          <input type="text" id="search-test-q" placeholder="今天有什么新闻">
+          <button class="act shrink" id="btn-search-test">搜一下</button>
+        </div>
+        <div class="status" id="search-test-status"></div>
+        <div class="note" id="search-test-result"></div>
+      </div>
+    </section>
+
+    <!-- 语音打开应用 -->
+    <section class="card">
+      <h2>语音打开应用 <span class="badge" id="apps-badge">—</span></h2>
+      <p class="hint">说「打开微信」「启动计算器」，查一下本机装了什么就直接拉起，不经过大模型，所以是瞬间反应。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="APPS_ENABLED">
+          <span>允许语音打开应用</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          应用名按<strong>同音</strong>匹配，听成「威信」「维信」也能认出是微信；
+          找不到的名字不会硬猜，会当成普通聊天交给大模型。只会打开开始菜单里有的程序，不会执行任意命令。
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="apps-test-name">试一下（会真的打开）</label>
+        <div class="row">
+          <input type="text" id="apps-test-name" placeholder="打开记事本">
+          <button class="act shrink" id="btn-apps-test">打开</button>
+        </div>
+        <div class="status" id="apps-test-status"></div>
+      </div>
+
+      <div class="note" id="apps-count">正在读取应用清单…</div>
+    </section>
+
     <!-- 交互 -->
     <section class="card">
       <h2>交互与页面</h2>
@@ -418,6 +519,8 @@ function paintGroups() {
     "tts-sapi": segValue("TTS_ENGINE") === "sapi",
     "asr-local": segValue("ASR_PROVIDER") === "local",
     "asr-openai": segValue("ASR_PROVIDER") === "openai",
+    "search-key": ["tavily", "bocha"].includes(segValue("SEARCH_BACKEND")),
+    "search-searx": segValue("SEARCH_BACKEND") === "searx",
   };
   groups().forEach((g) => {
     const show = map[g.dataset.group];
@@ -539,6 +642,28 @@ function renderState(data) {
   const sess = Number(c.WAKE_SESSION_SECONDS ?? 20);
   $("WAKE_SESSION_SECONDS").value = sess;
   $("WAKE_SESSION_SECONDS-v").textContent = sess > 0 ? sess + "s" : "关";
+
+  // 联网搜索
+  const hits = Number(c.SEARCH_RESULTS ?? 5);
+  $("SEARCH_RESULTS").value = hits;
+  $("SEARCH_RESULTS-v").textContent = String(hits);
+  const stimeout = Number(c.SEARCH_TIMEOUT ?? 6);
+  $("SEARCH_TIMEOUT").value = stimeout;
+  $("SEARCH_TIMEOUT-v").textContent = stimeout + "s";
+  $("SEARCH_ENDPOINT").value = c.SEARCH_ENDPOINT ?? "";
+  const searchKey = $("SEARCH_KEY");
+  searchKey.value = "";
+  delete searchKey.dataset.cleared;
+  searchKey.placeholder = c.SEARCH_KEY__set
+    ? `已保存 ${c.SEARCH_KEY}，留空表示不修改`
+    : "必应不需要 Key；Tavily / 博查填这里";
+  $("search-badge").textContent =
+    c.SEARCH_MODE === "off" ? "关闭" : c.SEARCH_MODE === "always" ? "每次" : "自动";
+  $("search-badge").dataset.mode = c.SEARCH_MODE || "auto";
+
+  // 语音打开应用
+  $("APPS_ENABLED").checked = !!c.APPS_ENABLED;
+  $("apps-badge").textContent = c.APPS_ENABLED ? "开启" : "关闭";
 
   // 分段控件先按配置值初始化，再绘制
   segs().forEach((seg) => {
@@ -693,6 +818,86 @@ $("btn-wake-test").addEventListener("click", async () => {
   }
 });
 
+// ---------------- 联网搜索 ----------------
+$("SEARCH_RESULTS").addEventListener("input", (ev) => {
+  $("SEARCH_RESULTS-v").textContent = ev.target.value;
+});
+$("SEARCH_TIMEOUT").addEventListener("input", (ev) => {
+  $("SEARCH_TIMEOUT-v").textContent = ev.target.value + "s";
+});
+
+$("btn-search-test").addEventListener("click", async () => {
+  const target = $("search-test-status");
+  const box = $("search-test-result");
+  const q = $("search-test-q").value.trim() || "今天有什么新闻";
+  box.textContent = "";
+  status(target, "搜索中…", "");
+  const params = new URLSearchParams({
+    q,
+    searx_endpoint: $("SEARCH_ENDPOINT").value.trim(),
+    search_endpoint: $("SEARCH_ENDPOINT").value.trim(),
+    search_key: $("SEARCH_KEY").value.trim(),
+    search_backend: segValue("SEARCH_BACKEND") || "",
+    search_results: $("SEARCH_RESULTS").value,
+    search_timeout: $("SEARCH_TIMEOUT").value,
+  });
+  try {
+    const data = await fetch("/api/search/test?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    const judge = data.should_search === undefined
+      ? ""
+      : `｜自动判断：${data.should_search ? "会去查" : "不查"}（${data.reason}）`;
+    if (!data.ok) {
+      status(target, `✗ ${data.error || "没查到"}${judge}`, "bad");
+      return;
+    }
+    status(target, `✓ ${data.backend} 返回 ${data.results.length} 条，${data.ms} ms${judge}`, "ok");
+    const lines = data.results.slice(0, 4).map((r, i) => {
+      const title = r.title || r.url || "(无标题)";
+      const snip = (r.snippet || "").slice(0, 90);
+      return `${i + 1}. ${title}${snip ? " — " + snip : ""}`;
+    });
+    box.textContent = lines.join("\n");
+    box.style.whiteSpace = "pre-wrap";
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+// ---------------- 语音打开应用 ----------------
+$("btn-apps-test").addEventListener("click", async () => {
+  const target = $("apps-test-status");
+  const raw = $("apps-test-name").value.trim();
+  if (!raw) {
+    status(target, "先填一个应用名，比如「打开记事本」", "");
+    return;
+  }
+  status(target, "查找中…", "");
+  try {
+    const data = await fetch("/api/apps/open?name=" + encodeURIComponent(raw), { headers: HEADERS })
+      .then((r) => r.json());
+    if (data.ok) status(target, `✓ ${data.say}`, "ok");
+    else status(target, `✗ ${data.say}${data.error ? "（" + data.error + "）" : ""}`, "bad");
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+async function loadApps() {
+  const el = $("apps-count");
+  try {
+    const data = await fetch("/api/apps", { headers: HEADERS }).then((r) => r.json());
+    if (!data.ok) {
+      el.textContent = "读取应用清单失败：" + (data.error || "未知原因");
+      return;
+    }
+    const names = data.apps.slice(0, 8).map((a) => a.name).join("、");
+    el.textContent = `本机已识别 ${data.count} 个可打开的应用，例如：${names}…`;
+  } catch (err) {
+    el.textContent = "读取应用清单失败：" + err;
+  }
+}
+
 function syncPreset() {
   const found = PRESETS.find((p) => p.base && p.base === $("OPENAI_BASE").value.trim());
   $("preset").value = found ? found.base : "";
@@ -842,6 +1047,12 @@ $("btn-save").addEventListener("click", async () => {
     WAKE_SENSITIVITY: Number($("WAKE_SENSITIVITY").value),
     WAKE_SILENCE: Number($("WAKE_SILENCE").value),
     WAKE_SESSION_SECONDS: Number($("WAKE_SESSION_SECONDS").value),
+    SEARCH_MODE: segValue("SEARCH_MODE"),
+    SEARCH_BACKEND: segValue("SEARCH_BACKEND"),
+    SEARCH_ENDPOINT: $("SEARCH_ENDPOINT").value.trim(),
+    SEARCH_RESULTS: Number($("SEARCH_RESULTS").value),
+    SEARCH_TIMEOUT: Number($("SEARCH_TIMEOUT").value),
+    APPS_ENABLED: $("APPS_ENABLED").checked,
   };
   if (payload.WAKE_ENABLED && !payload.WAKE_PHRASE) {
     // 空提示词会让唤醒永远不命中，等于悄悄失效，不如直接拦下来
@@ -855,6 +1066,13 @@ $("btn-save").addEventListener("click", async () => {
   } else if (keyInput.value.trim()) {
     payload.OPENAI_KEY = keyInput.value.trim();
   }                                      // 留空则不动已存密钥
+
+  const searchKeyInput = $("SEARCH_KEY");
+  if (searchKeyInput.dataset.cleared === "1") {
+    payload.SEARCH_KEY = "";
+  } else if (searchKeyInput.value.trim()) {
+    payload.SEARCH_KEY = searchKeyInput.value.trim();
+  }
 
   try {
     const res = await fetch("/api/config", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
@@ -889,6 +1107,7 @@ $("btn-save").addEventListener("click", async () => {
 });
 
 load();
+loadApps();
 setInterval(pollLive, 2000);
 </script>
 </body>

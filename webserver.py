@@ -207,6 +207,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_models(query)
         elif path == "/api/wake/test":
             self._handle_wake_test(query)
+        elif path == "/api/search/test":
+            self._handle_search_test(query)
+        elif path == "/api/apps":
+            self._handle_apps(query)
+        elif path == "/api/apps/open":
+            self._handle_apps_open(query)
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -258,6 +264,69 @@ class _Handler(BaseHTTPRequestHandler):
                 "mode": "同音" if getattr(wake, "HAS_PINYIN", False) else "逐字",
             }
         )
+
+    def _handle_search_test(self, query: dict) -> None:
+        """试搜一次，顺便告诉用户「这句话会不会触发联网」。
+
+        两个问题得分开回答：能不能连通（后端/密钥对不对），以及自动模式下
+        到底判不判要搜。后者是纯本地规则，不用等网络。
+        """
+        q = (query.get("q") or ["今天有什么新闻"])[0]
+        try:
+            import search
+        except Exception as exc:  # noqa: BLE001
+            self._error(f"搜索模块加载失败：{exc}", 500)
+            return
+
+        values: dict = {}
+        for key in ("SEARCH_BACKEND", "SEARCH_KEY", "SEARCH_ENDPOINT"):
+            raw = (query.get(key.lower()) or [""])[0]
+            if raw:
+                values[key] = raw
+        for key in ("SEARCH_RESULTS", "SEARCH_TIMEOUT"):
+            raw = (query.get(key.lower()) or [""])[0]
+            if raw:
+                try:
+                    values[key] = float(raw)
+                except ValueError:
+                    pass
+
+        result = search.test({**values, "q": q})
+        need, why = search.should_search(q)
+        result["should_search"] = need
+        result["reason"] = why
+        result["search_mode"] = config.SEARCH_MODE
+        self._json(result)
+
+    def _handle_apps(self, query: dict) -> None:
+        """列出能被语音打开的应用，顺便告诉页面一共认多少个。"""
+        keyword = (query.get("q") or [""])[0]
+        try:
+            import apps
+        except Exception as exc:  # noqa: BLE001
+            self._error(f"应用模块加载失败：{exc}", 500)
+            return
+        items = apps.list_apps(keyword, limit=60)
+        self._json({"ok": True, "count": len(apps.list_apps("", limit=999)),
+                    "apps": items})
+
+    def _handle_apps_open(self, query: dict) -> None:
+        """试打开一个。名字解析成功就真的启动 —— 这是唯一能验证「认不认得」的办法。"""
+        name = (query.get("name") or [""])[0].strip()
+        if not name:
+            self._error("先填一个应用名")
+            return
+        try:
+            import apps
+        except Exception as exc:  # noqa: BLE001
+            self._error(f"应用模块加载失败：{exc}", 500)
+            return
+        parsed = apps.parse_open(name) or (name, True)
+        entry = apps.find(parsed[0], deep=True)
+        result = apps.open_app(parsed[0], entry)
+        result["matched"] = entry.label if entry else ""
+        result["kind"] = entry.kind if entry else ""
+        self._json(result)
 
     # ---------------- POST ----------------
     def do_POST(self) -> None:

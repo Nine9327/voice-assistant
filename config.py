@@ -58,6 +58,17 @@ WAKE_SILENCE = 0.8                # 说完后静音多久算一句话结束（�
 WAKE_SESSION_SECONDS = 20         # 唤醒后保持对话的时长：这段时间里直接说就行，不用再喊提示词；
                                   # 超过这么久没说话就转回休眠。0 = 关闭连续对话
 
+# ---------------- 本机指令 ----------------
+APPS_ENABLED = True               # 说「打开微信」直接执行，不绕大模型
+
+# ---------------- 联网搜索 ----------------
+SEARCH_MODE = "auto"              # off=从不联网 / auto=按问题判断（推荐）/ always=每次都查
+SEARCH_BACKEND = "bing"           # bing=必应（免 key，国内直连）/ tavily / bocha / searx
+SEARCH_KEY = ""                   # tavily、bocha 需要；必应留空即可
+SEARCH_ENDPOINT = ""              # searx 必填，如 http://127.0.0.1:8888
+SEARCH_RESULTS = 5                # 取前几条结果喂给模型
+SEARCH_TIMEOUT = 6                # 单次搜索超时（秒）
+
 # ---------------- Web 配置页 ----------------
 WEB_HOST = "127.0.0.1"            # 只监听本机，不对外暴露
 WEB_PORT = 8765

@@ -240,12 +240,48 @@ def ensure_model() -> None:
 # --------------------------------------------------------------------------
 # 对话
 # --------------------------------------------------------------------------
-def stream_reply(history: list[dict]) -> Iterator[str]:
+_WEEK = "一二三四五六日"
+
+
+def now_note() -> str:
+    """把真实时间告诉模型。
+
+    7B 模型不知道今天是几号，问「现在几点」「今天周几」它会拿训练数据里的日期瞎猜。
+    本地能答的事就别去联网，所以这条一直在。
+
+    刻意放在消息列表**末尾**而不是第一条 system 里：Ollama 的 KV cache 按前缀复用，
+    时间每轮都变，塞在开头等于每轮都让缓存失效，首字延迟直接从 0.1 秒涨到 0.5 秒以上。
+    """
+    stamp = time.localtime()
+    return (
+        f"（当前真实时间：{stamp.tm_year}年{stamp.tm_mon}月{stamp.tm_mday}日 "
+        f"星期{_WEEK[stamp.tm_wday]} {stamp.tm_hour:02d}:{stamp.tm_min:02d}。"
+        "问到时间、日期、星期几，直接按这个回答。）"
+    )
+
+
+def _compose(history: list[dict], extra_context: str = "") -> list[dict]:
+    """在最后一条 user 之前插入时间说明和（可选的）联网资料。
+
+    不写回 history：搜索结果是「这一轮用过的证据」，留在历史里会让模型
+    下一轮继续引用已经不相关的旧网页。
+    """
+    msgs = list(history)
+    extras: list[dict] = [{"role": "system", "content": now_note()}]
+    if extra_context:
+        extras.append({"role": "system", "content": extra_context})
+    if msgs and msgs[-1].get("role") == "user":
+        return msgs[:-1] + extras + [msgs[-1]]
+    return msgs + extras
+
+
+def stream_reply(history: list[dict], extra_context: str = "") -> Iterator[str]:
     """逐 token 产出模型输出。按当前服务自动分发。"""
+    messages = _compose(history, extra_context)
     if config.LLM_PROVIDER == "openai":
-        yield from _stream_openai(history)
+        yield from _stream_openai(messages)
     else:
-        yield from _stream_ollama(history)
+        yield from _stream_ollama(messages)
 
 
 def _stream_ollama(history: list[dict]) -> Iterator[str]:

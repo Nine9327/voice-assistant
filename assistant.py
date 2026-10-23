@@ -53,8 +53,10 @@ def _ensure_streams() -> None:
 
 _ensure_streams()
 
+import apps  # noqa: E402
 import config  # noqa: E402
 import llm  # noqa: E402
+import search  # noqa: E402
 from rich.console import Console  # noqa: E402
 from rich.panel import Panel  # noqa: E402
 
@@ -157,12 +159,16 @@ class LiveState:
         self.asr_ms = 0.0
         self.bubble = ""
         self.session_until = 0.0
+        self.note = ""            # 临时提示，如「正在查资料…」，覆盖 thinking 时的默认文案
 
     def update(self, status: str | None = None, heard: str | None = None,
                reply: str | None = None, asr_ms: float | None = None,
-               session_until: float | None = None) -> None:
+               session_until: float | None = None,
+               note: str | None = None) -> None:
         with self._lock:
             if status is not None:
+                if status != self.status:
+                    self.note = ""   # 状态变了，上一轮的临时提示就作废
                 self.status = status
             if heard is not None:
                 self.heard = heard
@@ -172,13 +178,15 @@ class LiveState:
                 self.asr_ms = asr_ms
             if session_until is not None:
                 self.session_until = session_until
+            if note is not None:
+                self.note = note
             self.bubble = self._compose_bubble()
 
     def _compose_bubble(self) -> str:
         if self.status == "listening":
             return "我在听…"
         if self.status == "thinking":
-            return "在想…"
+            return self.note or "在想…"
         if self.status == "speaking":
             return self.reply.strip()[:64] or "…"
         return ""
@@ -284,6 +292,48 @@ def trim_history(history: list[dict]) -> list[dict]:
     return [history[0]] + history[1:][-keep:]
 
 
+# 「打开 A 然后 B」这类复合指令不该被当成本机指令硬接
+_COMPLEX_WORDS = ("然后", "接着", "并且", "顺便", "之后", "以后", "帮我给", "帮我写",
+                  "搜索", "查一下", "发消息", "发个", "播放")
+
+
+def handle_app_command(text: str, speaker, live: LiveState | None = None) -> str | None:
+    """「打开微信」这类本机指令就地执行，不绕大模型。
+
+    返回要播报的那句话；返回 None 表示不接管，照常走大模型。
+    之所以不交给大模型：让它自己想办法启动程序既慢又危险，而这件事完全是查表。
+    """
+    if not getattr(config, "APPS_ENABLED", True):
+        return None
+    parsed = apps.parse_open(text)
+    if parsed is None:
+        return None
+    name, strong = parsed
+
+    # 「打开微信然后给张三发消息」会被正则囫囵吞成一个长名字，而包含匹配又能
+    # 命中里面的「微信」—— 那就变成「只说了一半就动手」。这种复合指令交回大模型。
+    if len(name) > 12 or any(w in name for w in _COMPLEX_WORDS):
+        return None
+
+    # 强意图才值得去翻商店应用清单（那要起一次 PowerShell）；弱意图先用本地索引快速判一下
+    entry = apps.find(name, deep=strong)
+    if entry is None and not strong:
+        return None       # 「开个玩笑」这类，交回大模型正常聊
+
+    console.print(f"[dim]本机指令：打开「{name}」[/dim]")
+    if live is not None:
+        live.update("thinking", heard=text, reply="", note=f"正在打开{name}…")
+        live.update("speaking", reply=f"打开了{name}。")
+    result = apps.open_app(name, entry)
+    say = result["say"]
+    if live is not None:
+        live.update("idle", reply=say, note="")
+    if speaker is not None:
+        speaker.say(say)
+        speaker.wait_done()
+    return say
+
+
 def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None = None) -> str:
     """跑一轮大模型，边流式打印边逐句播报。返回完整回复。"""
     splitter = None
@@ -294,9 +344,45 @@ def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None
 
     pieces: list[str] = []
     first_token_at: float | None = None
+
+    extra_context = ""
+    question = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            question = str(msg.get("content") or "")
+            break
+
+    if question:
+        need, why = search.should_search(question)
+        if need:
+            console.print(f"[dim]联网查询（{why}）…[/dim]")
+            if live is not None:
+                live.update(note="正在查资料…")
+            t_s = time.perf_counter()
+            result = search.web_search(question)
+            search_ms = (time.perf_counter() - t_s) * 1000
+            if result.get("ok"):
+                body = search.build_context(result)
+                if body:
+                    extra_context = (
+                        "下面是从网上搜到的资料，请只依据它回答，不要凭记忆补充或编造；"
+                        "资料和问题无关就直接说没查到。\n"
+                        "回答仍然要口语化：不要用 1. 2. 3. 编号或列表，最多挑三条连成一段话说。\n"
+                        + body
+                    )
+                console.print(
+                    f"[dim]查到 {len(result.get('results') or [])} 条"
+                    f"（{result.get('backend')} {search_ms:.0f}ms"
+                    f"{'，来自缓存' if result.get('cached') else ''}）[/dim]"
+                )
+            else:
+                console.print(f"[dim]没查成：{result.get('error')}[/dim]")
+            if live is not None:
+                live.update(note="")   # 回到默认的「在想…」
+
     t0 = time.perf_counter()
 
-    for chunk in llm.stream_reply(history):
+    for chunk in llm.stream_reply(history, extra_context=extra_context):
         if first_token_at is None:
             first_token_at = time.perf_counter() - t0
         pieces.append(chunk)
@@ -600,10 +686,15 @@ def main() -> None:
 
     # 纯文本模式：验证「大模型 + 播报」这一段
     if args.text:
-        history.append({"role": "user", "content": args.text})
         console.print(f"[cyan]你（文本）：[/cyan]{args.text}")
         live.update("thinking", heard=args.text)
-        reply_once(history, speaker, live=live)
+        console.print("[green]助手：[/green]", end="")
+        app_say = handle_app_command(args.text, speaker, live)
+        if app_say is not None:
+            console.print(app_say)
+        else:
+            history.append({"role": "user", "content": args.text})
+            reply_once(history, speaker, live=live)
         if speaker is not None:
             speaker.wait_done()
         return
@@ -776,11 +867,21 @@ def main() -> None:
             console.print("[green]助手：[/green]", end="")
 
             INTERRUPT.clear()  # 录音期间点的「停下」不该把回答也掐掉
-            history.append({"role": "user", "content": user_text})
-            reply = reply_once(history, speaker, hotkey, live)
-            history.append({"role": "assistant", "content": reply})
-            history = trim_history(history)
-            last_reply = reply
+
+            # 先看是不是「打开某应用」这类本机指令：查表就能办的事不必惊动大模型
+            app_say = handle_app_command(user_text, speaker, live)
+            if app_say is not None:
+                console.print(app_say)
+                history.append({"role": "user", "content": user_text})
+                history.append({"role": "assistant", "content": app_say})
+                history = trim_history(history)
+                last_reply = app_say
+            else:
+                history.append({"role": "user", "content": user_text})
+                reply = reply_once(history, speaker, hotkey, live)
+                history.append({"role": "assistant", "content": reply})
+                history = trim_history(history)
+                last_reply = reply
 
             if speaker is not None:
                 speaker.wait_done()

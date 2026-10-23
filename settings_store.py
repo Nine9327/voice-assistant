@@ -108,6 +108,28 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "type": "int", "min": 0, "max": 300,
         "label": "会话保持", "group": "wake",
     },
+
+    # ---------- 联网搜索 ----------
+    "SEARCH_MODE": {
+        "type": "choice", "choices": ["off", "auto", "always"],
+        "label": "联网方式", "group": "search",
+    },
+    "SEARCH_BACKEND": {
+        "type": "choice", "choices": ["bing", "tavily", "bocha", "searx"],
+        "label": "搜索服务", "group": "search",
+    },
+    "SEARCH_KEY": {"type": "secret", "label": "API Key", "group": "search"},
+    "SEARCH_ENDPOINT": {"type": "str", "label": "SearXNG 地址", "group": "search"},
+    "SEARCH_RESULTS": {
+        "type": "int", "min": 1, "max": 10, "label": "结果条数", "group": "search",
+    },
+    "SEARCH_TIMEOUT": {
+        "type": "float", "min": 2.0, "max": 30.0, "step": 1.0,
+        "label": "搜索超时", "group": "search",
+    },
+
+    # ---------- 本机指令 ----------
+    "APPS_ENABLED": {"type": "bool", "label": "语音打开应用", "group": "apps"},
 }
 
 SECRET_KEYS = {k for k, v in SCHEMA.items() if v.get("type") == "secret"}
