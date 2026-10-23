@@ -858,7 +858,8 @@ function renderOverview(c, r) {
     {
       module: "mcp", label: "MCP 工具", dot: !c.MCP_ENABLED ? "" : (mcp.connected ? "ok" : "warn"),
       value: !c.MCP_ENABLED ? "已关闭"
-        : (mcp.tools ? mcp.tools + " 个工具 / " + mcp.connected + " 个服务器" : "没有可用工具"),
+        : (!mcp.servers ? "还没有配置服务器"
+          : (mcp.tools ? mcp.tools + " 个工具 / " + mcp.connected + " 个服务器" : "没有可用工具")),
       note: "最多调用 " + c.MCP_MAX_ROUNDS + " 轮，单次超时 " + c.MCP_TIMEOUT + "s",
     },
     {
@@ -1029,7 +1030,8 @@ function renderState(data) {
   if (r.mcp) {
     const m = r.mcp;
     $("mcp-badge").textContent = !c.MCP_ENABLED ? "关闭"
-      : (m.tools ? m.tools + " 个工具" : (m.connected ? "无工具" : "未连接"));
+      : (m.tools ? m.tools + " 个工具"
+        : (m.servers === 0 ? "未配置" : (m.connected ? "无工具" : "未连接")));
   }
 
   renderOverview(c, r);
@@ -1397,6 +1399,7 @@ function paintMcpSummary(sum) {
   const badge = $("mcp-badge");
   if (!on) badge.textContent = "关闭";
   else if (sum.tools) badge.textContent = sum.tools + " 个工具";
+  else if (!sum.servers) badge.textContent = "未配置";
   else badge.textContent = sum.connected ? "无工具" : "未连接";
 }
 
