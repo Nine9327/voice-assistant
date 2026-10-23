@@ -54,11 +54,13 @@ def _ensure_streams() -> None:
 _ensure_streams()
 
 import apps  # noqa: E402
+import bargein  # noqa: E402
 import config  # noqa: E402
 import llm  # noqa: E402
 import mcp_tools  # noqa: E402
 import persona  # noqa: E402
 import search  # noqa: E402
+import wake as wake_mod  # noqa: E402
 from rich.console import Console  # noqa: E402
 from rich.panel import Panel  # noqa: E402
 
@@ -268,6 +270,7 @@ class RuntimeBridge:
         self.asr: AsrService | None = None
         self.live: LiveState | None = None
         self.waker = None
+        self.barge: object | None = None
 
     def info(self) -> dict:
         out: dict = {}
@@ -281,6 +284,7 @@ class RuntimeBridge:
             out["wake"] = self.waker.info()
         else:
             out["wake"] = {"state": "off", "enabled": False, "phrase": config.WAKE_PHRASE}
+        out["barge"] = self.barge.info() if self.barge is not None else {"enabled": False}
         return out
 
     def reload_asr(self) -> dict:
@@ -292,6 +296,33 @@ class RuntimeBridge:
 def trim_history(history: list[dict]) -> list[dict]:
     keep = config.MAX_HISTORY_TURNS * 2
     return [history[0]] + history[1:][-keep:]
+
+
+def sounds_like(text: str, other: str) -> bool:
+    """两段中文听着像不像同一句。各种回声判定都用它。"""
+    if not other:
+        return False
+    a = wake_mod.normalize(text)
+    b = wake_mod.normalize(other)
+    if len(a) < 4 or not b:
+        return False
+    return a in b or b in a
+
+
+def transcribe_interrupt(asr, pre, fresh, spoken, min_seconds: float = 0.3) -> str:
+    """打断后的识别：优先「播报里录到的那截 + 新录的」，听着像回声就退回新录的。
+
+    打断那一刻用户往往已经说了半句，只认新录的那段会丢掉开头；
+    但接上播报那截又可能把助手自己的话也录进来，所以做一次回声兜底。
+    """
+    floor = int(config.SAMPLE_RATE * min_seconds)
+    for audio in (bargein.join(pre, fresh), fresh):
+        if audio is None or len(audio) < floor:
+            continue
+        text = asr.transcribe(audio)
+        if text and not sounds_like(text, spoken):
+            return text
+    return ""
 
 
 def handle_persona_command(text: str, speaker, live: LiveState | None = None) -> str | None:
@@ -798,10 +829,20 @@ def main() -> None:
     hotkey.start()
 
     import vad
-    import wake as wake_mod
-    from wake import Waker, normalize as wake_norm, peak_of as wake_peak
+    from wake import Waker, peak_of as wake_peak
 
     segmenter = vad.Segmenter(config.WAKE_SENSITIVITY, config.WAKE_SILENCE)
+
+    # 播报期间盯麦克风：听到开口就停，不等它把话说完
+    barge: bargein.BargeIn | None = None
+    if speaker is not None:
+        def on_barge_hit() -> None:
+            speaker.interrupt()   # 停播报、清掉还没念的句子
+            INTERRUPT.set()       # 让还在生成的流式循环一起收手
+
+        barge = bargein.BargeIn(rec, speaker, on_barge_hit)
+        bridge.barge = barge
+        barge.start()
 
     def on_wake(rest: str, heard: str, asr_ms: float) -> None:
         """唤醒词命中。提示词后面如果跟了内容，就当成一句话直接处理。"""
@@ -828,6 +869,8 @@ def main() -> None:
     # 会话保持：唤醒后 session_until 之前都不用再喊提示词，超时自动转休眠
     session_until = 0.0
     last_reply = ""
+    # 被打断后带过来的东西：(打断前录到的音频, 当时正在说的话)
+    pending: tuple[object, str] | None = None
 
     def wake_ready() -> bool:
         return waker is not None and config.WAKE_ENABLED
@@ -840,11 +883,7 @@ def main() -> None:
         """
         if not last_reply:
             return False
-        a = wake_norm(text)
-        b = wake_norm(last_reply)
-        if len(a) < 4 or not b:
-            return False
-        return a in b or b in a
+        return sounds_like(text, last_reply)
 
     try:
         while not STOP.is_set():
@@ -865,6 +904,8 @@ def main() -> None:
                 session_until = 0.0
                 # 没开唤醒词就没有「休眠」这回事，只是空闲
                 live.update("sleeping" if wake_ready() else "idle", session_until=0.0)
+                if barge is not None:
+                    barge.disarm()      # 环形缓冲交还给唤醒线程
                 if waker is not None:
                     waker.enable()
                 item = wait_for_trigger(hotkey, bus)
@@ -872,6 +913,8 @@ def main() -> None:
                     break
             if waker is not None:
                 waker.disable()
+            if barge is not None:
+                barge.arm()
             INTERRUPT.clear()
 
             kind, text, heard = item
@@ -899,6 +942,7 @@ def main() -> None:
                     spoke = True
                 else:
                     console.print("[red]● 录音中…[/red]", end="\r")
+                    echo_text = ""
                     if in_session:
                         # 会话模式：话筒一直开着，等到你说完、或者会话到期为止
                         if speaker is not None:
@@ -912,6 +956,14 @@ def main() -> None:
                         no_speech_timeout=no_speech,
                         max_seconds=min(config.MAX_RECORD_SECONDS, 25),
                     )
+                fresh_audio = audio
+                if pending is not None:
+                    # 打断时用户已经开口了，头几个字是在播报里说的，
+                    # 先记下来，识别时再决定要不要接上（见 transcribe_interrupt）
+                    pre_audio, echo_text = pending
+                    pending = None
+                    audio = bargein.join(pre_audio, audio)
+                    spoke = True
                 duration = len(audio) / config.SAMPLE_RATE
                 console.print(" " * 20, end="\r")
 
@@ -934,7 +986,10 @@ def main() -> None:
                     continue
 
                 t_asr = time.perf_counter()
-                user_text = asr.transcribe(audio)
+                if echo_text:
+                    user_text = transcribe_interrupt(asr, pre_audio, fresh_audio, echo_text)
+                else:
+                    user_text = asr.transcribe(audio)
                 asr_ms = (time.perf_counter() - t_asr) * 1000
                 if not user_text:
                     console.print("[dim]没听清，再说一次[/dim]")
@@ -969,6 +1024,15 @@ def main() -> None:
 
             if speaker is not None:
                 speaker.wait_done()
+            if barge is not None:
+                pre_audio, spoken = barge.take()
+                if len(pre_audio):
+                    # 打断是「我们」触发的，不能让它把下一轮录音也掐掉
+                    INTERRUPT.clear()
+                    console.print("[yellow]（你打断了，我听着）[/yellow]")
+                    pending = (pre_audio, spoken)
+                    if not in_session:
+                        bus.push(TriggerBus.LISTEN, heard="")
             # 一轮回答结束：处于唤醒状态就再挂一段「会话」，让用户可以直接追问
             if wake_ready() and config.WAKE_SESSION_SECONDS > 0:
                 session_until = time.monotonic() + config.WAKE_SESSION_SECONDS
@@ -983,6 +1047,8 @@ def main() -> None:
         STOP.set()
         if waker is not None:
             waker.stop()
+        if barge is not None:
+            barge.stop()
         hotkey.stop()
         rec.close()
         if speaker is not None:

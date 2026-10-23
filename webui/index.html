@@ -155,6 +155,9 @@
   .tool-chip { font-size: 11.5px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; color: var(--muted); }
   .tool-chip b { color: var(--text); font-weight: 500; }
   .empty { color: var(--muted); font-size: 12.5px; border: 1px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; }
+  .meter { position: relative; height: 10px; border-radius: 5px; background: #1b2130; overflow: hidden; margin-top: 8px; }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); transition: width .12s linear; }
+  .meter .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff9f43; }
 
   /* ---------- 性格卡片 ---------- */
   .persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
@@ -233,6 +236,7 @@
       <button type="button" class="nav" data-module="wake">唤醒与形象<span class="n-dot"></span></button>
 
       <div class="nav-title">行为</div>
+      <button type="button" class="nav" data-module="barge">语音打断<span class="n-dot"></span></button>
       <button type="button" class="nav" data-module="search">联网搜索<span class="n-dot"></span></button>
       <button type="button" class="nav" data-module="apps">语音打开应用<span class="n-dot"></span></button>
       <button type="button" class="nav" data-module="misc">交互与页面<span class="n-dot"></span></button>
@@ -600,6 +604,50 @@
       <div class="note">桌面形象是独立进程：双击 <code>start.vbs</code> 一起启动；右键点它可以打开本页或退出程序。</div>
     </section>
 
+    <!-- ==================== 语音打断 ==================== -->
+    <section class="card page hidden" data-module="barge">
+      <h2>语音打断 <span class="badge" id="barge-badge">—</span></h2>
+      <p class="hint">它说话的时候你直接开口，播报立刻停，接着听你说下一句 —— 不用等它把话说完。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="BARGE_IN_ENABLED">
+          <span>允许语音打断</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          判定方式：拿<strong>它自己的播报声</strong>当基线，麦克风电平超过这个基线若干倍、
+          并持续一段时间，才认定是你在说话。所以外放再响也不会自己打断自己；
+          很难打断就调高灵敏度，老是被误打断就调低。
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>灵敏度（电平要超过回声的倍数）</label>
+          <div class="inline">
+            <input type="range" id="BARGE_IN_SENSITIVITY" min="0.1" max="1" step="0.05">
+            <span class="val" id="BARGE_IN_SENSITIVITY-v">—</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>持续多久才算你在说话</label>
+          <div class="inline">
+            <input type="range" id="BARGE_IN_MIN_MS" min="100" max="1200" step="50">
+            <span class="val" id="BARGE_IN_MIN_MS-v">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>实时电平（对着麦克风说话，看它有没有越过橙线）</label>
+        <div class="meter">
+          <div class="fill" id="barge-fill"></div>
+          <div class="mark" id="barge-mark"></div>
+        </div>
+        <div class="note" id="barge-live">—</div>
+      </div>
+    </section>
+
     <!-- ==================== 联网搜索 ==================== -->
     <section class="card page hidden" data-module="search">
       <h2>联网搜索 <span class="badge" id="search-badge">—</span></h2>
@@ -759,6 +807,7 @@ const MODULES = {
   asr: { title: "语音识别", sub: "决定「怎么听懂你」：本地 whisper，或网络识别接口。" },
   tts: { title: "语音合成", sub: "决定「用什么声音说」：在线音质自然，离线断网可用。" },
   wake: { title: "唤醒与形象", sub: "说提示词就能开口；唤醒后还能连续追问。" },
+  barge: { title: "语音打断", sub: "它说话时你一开口就停，不用等它把话说完。" },
   search: { title: "联网搜索", sub: "时效性问题先上网查一段，再让模型组织成口语。" },
   apps: { title: "语音打开应用", sub: "查表直接拉起，不经过大模型，所以是瞬间反应。" },
   misc: { title: "交互与页面", sub: "录音时长判定与配置页自身设置。" },
@@ -964,6 +1013,11 @@ function renderOverview(c, r) {
       note: c.WAKE_ENABLED ? "唤醒后连续对话 " + (c.WAKE_SESSION_SECONDS || 0) + " 秒" : "只支持按住空格",
     },
     {
+      module: "barge", label: "语音打断", dot: c.BARGE_IN_ENABLED ? "ok" : "",
+      value: c.BARGE_IN_ENABLED ? "已开启" : "已关闭",
+      note: "电平超过回声 " + bargeRatio(c.BARGE_IN_SENSITIVITY).toFixed(1) + " 倍才算你开口",
+    },
+    {
       module: "search", label: "联网搜索", dot: c.SEARCH_MODE === "off" ? "" : "ok",
       value: c.SEARCH_MODE === "off" ? "已关闭" : (c.SEARCH_MODE === "always" ? "每次都查" : "按问题判断"),
       note: "服务 " + String(c.SEARCH_BACKEND || "").toUpperCase() + " · 取 " + c.SEARCH_RESULTS + " 条",
@@ -1050,6 +1104,15 @@ function renderState(data) {
   const sess = Number(c.WAKE_SESSION_SECONDS ?? 20);
   $("WAKE_SESSION_SECONDS").value = sess;
   $("WAKE_SESSION_SECONDS-v").textContent = sess > 0 ? sess + "s" : "关";
+
+  // 语音打断
+  $("BARGE_IN_ENABLED").checked = !!c.BARGE_IN_ENABLED;
+  const bsens = Number(c.BARGE_IN_SENSITIVITY ?? 0.6);
+  $("BARGE_IN_SENSITIVITY").value = bsens;
+  const bms = Number(c.BARGE_IN_MIN_MS ?? 350);
+  $("BARGE_IN_MIN_MS").value = bms;
+  paintBarge();
+  $("barge-badge").textContent = c.BARGE_IN_ENABLED ? "开启" : "关闭";
 
   // 联网搜索
   const hits = Number(c.SEARCH_RESULTS ?? 5);
@@ -1168,6 +1231,52 @@ async function pollLive() {
     $("wake-live").textContent = "监听状态：连不上助手进程（可能已经退出）";
   }
 }
+
+// ---------------- 语音打断 ----------------
+const BARGE_SCALE = 0.12;   // 电平条的满量程，正好覆盖「正常说话」的量级
+
+function bargeRatio(s) {
+  return 4.0 - 2.6 * Math.max(0, Math.min(1, Number(s) || 0));
+}
+
+function paintBarge() {
+  const s = Number($("BARGE_IN_SENSITIVITY").value || 0.6);
+  const ms = Number($("BARGE_IN_MIN_MS").value || 350);
+  $("BARGE_IN_SENSITIVITY-v").textContent = bargeRatio(s).toFixed(1) + "×";
+  $("BARGE_IN_MIN_MS-v").textContent = ms + "ms";
+}
+
+$("BARGE_IN_SENSITIVITY").addEventListener("input", paintBarge);
+$("BARGE_IN_MIN_MS").addEventListener("input", paintBarge);
+
+async function pollBarge() {
+  if (CURRENT !== "barge") return;   // 只在看这一页时才轮询
+  try {
+    const b = await fetch("/api/barge", { headers: HEADERS }).then((r) => r.json());
+    if (!b || b.enabled === undefined) return;
+    if (b.need === undefined) {
+      // 仅配置模式没有助手进程，没有麦克风可看
+      $("barge-fill").style.width = "0%";
+      $("barge-mark").style.left = "0%";
+      $("barge-live").textContent = "实时电平要等助手进程跑起来才有（仅配置模式没有麦克风）";
+      return;
+    }
+    const level = Number(b.level || 0);
+    const need = Number(b.need || 0);
+    $("barge-fill").style.width = Math.min(100, (level / BARGE_SCALE) * 100) + "%";
+    $("barge-mark").style.left = Math.min(100, (need / BARGE_SCALE) * 100) + "%";
+    const bits = ["电平 " + level.toFixed(4), "触发线 " + need.toFixed(4)];
+    if (b.speaking) bits.push("正在播报");
+    if (!b.enabled) bits.push("打断当前是关的");
+    if (b.hits) bits.push("已打断 " + b.hits + " 次");
+    if (b.last_ms) bits.push("上次判定用了 " + b.last_ms + "ms");
+    $("barge-live").textContent = bits.join(" · ");
+  } catch (err) {
+    $("barge-live").textContent = "读不到助手进程的状态（可能已经退出）";
+  }
+}
+
+setInterval(pollBarge, 500);
 
 async function load() {
   foot("读取配置…");
@@ -1936,6 +2045,9 @@ $("btn-save").addEventListener("click", async () => {
     WAKE_SENSITIVITY: Number($("WAKE_SENSITIVITY").value),
     WAKE_SILENCE: Number($("WAKE_SILENCE").value),
     WAKE_SESSION_SECONDS: Number($("WAKE_SESSION_SECONDS").value),
+    BARGE_IN_ENABLED: $("BARGE_IN_ENABLED").checked,
+    BARGE_IN_SENSITIVITY: Number($("BARGE_IN_SENSITIVITY").value),
+    BARGE_IN_MIN_MS: Number($("BARGE_IN_MIN_MS").value),
     SEARCH_MODE: segValue("SEARCH_MODE"),
     SEARCH_BACKEND: segValue("SEARCH_BACKEND"),
     SEARCH_ENDPOINT: $("SEARCH_ENDPOINT").value.trim(),
@@ -2021,7 +2133,7 @@ $("btn-save").addEventListener("click", async () => {
 document.addEventListener("keydown", (ev) => {
   if (ev.target.matches("input, textarea, select")) return;
   if (!ev.altKey) return;
-  const order = ["overview", "persona", "llm", "mcp", "asr", "tts", "wake", "search", "apps", "misc"];
+  const order = ["overview", "persona", "llm", "mcp", "asr", "tts", "wake", "barge", "search", "apps", "misc"];
   const idx = ev.key === "0" ? 9 : Number(ev.key) - 1;
   if (order[idx]) { ev.preventDefault(); showModule(order[idx]); }
 });

@@ -219,6 +219,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self._mcp_payload())
         elif path == "/api/persona":
             self._handle_persona(query)
+        elif path == "/api/barge":
+            # 打断调试：当前电平、判定倍数、命中次数，页面可高频轮询
+            self._json(self.app.live_state().get("barge", {"enabled": False}))
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:

@@ -138,6 +138,17 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "label": "搜索超时", "group": "search",
     },
 
+    # ---------- 语音打断 ----------
+    "BARGE_IN_ENABLED": {"type": "bool", "label": "语音打断", "group": "barge"},
+    "BARGE_IN_SENSITIVITY": {
+        "type": "float", "min": 0.1, "max": 1.0, "step": 0.05,
+        "label": "灵敏度", "group": "barge",
+    },
+    "BARGE_IN_MIN_MS": {
+        "type": "int", "min": 100, "max": 1200, "step": 50,
+        "label": "持续多久才算", "group": "barge",
+    },
+
     # ---------- 本机指令 ----------
     "APPS_ENABLED": {"type": "bool", "label": "语音打开应用", "group": "apps"},
 
