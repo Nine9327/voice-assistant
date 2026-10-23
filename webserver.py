@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 import config
 import llm
 import mcp_tools
+import persona
 import settings_store
 import tts
 
@@ -216,6 +217,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_apps_open(query)
         elif path == "/api/mcp":
             self._json(self._mcp_payload())
+        elif path == "/api/persona":
+            self._handle_persona(query)
         elif path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
@@ -390,6 +393,44 @@ class _Handler(BaseHTTPRequestHandler):
         threading.Thread(target=hub.reload, name="mcp-reload", daemon=True).start()
         self._json({"ok": True, "reloading": True})
 
+    # ---------------- 性格 ----------------
+    def _handle_persona(self, query: dict) -> None:
+        """清单 + 当前生效的完整提示词。
+
+        带 preset/extra 参数时按页面「尚未保存」的选择拼一份，用来预览最终提示词 ——
+        页面上改了不保存也能看清模型到底收到了什么。
+        """
+        payload = persona.client_payload()
+        preset = (query.get("preset") or [""])[0]
+        if preset:
+            extra = (query.get("extra") or [None])[0]
+            payload["composed"] = persona.system_prompt(preset, extra=extra)
+            payload["composed_for"] = preset
+        self._json(payload)
+
+    def _handle_persona_preview(self) -> None:
+        """用指定性格试答一句，不保存、不发声。"""
+        payload = self._read_json()
+        if payload is None:
+            return
+        preset = str(payload.get("preset") or persona.current_id())
+        if preset not in persona.BY_ID:
+            self._error("没有这个性格")
+            return
+        question = str(payload.get("question") or "").strip()[:200]
+        extra = payload.get("extra")
+        try:
+            result = persona.preview(preset, question, extra=extra if extra is None else str(extra))
+        except llm.LLMError as exc:
+            self._error(f"大模型没答上来：{exc}", 503)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._error(f"试答失败：{exc}", 500)
+            return
+        result["preset"] = preset
+        result["name"] = persona.get(preset)["name"]
+        self._json(result)
+
     # ---------------- POST ----------------
     def do_POST(self) -> None:
         path = urlparse(self.path).path
@@ -414,6 +455,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_mcp_test()
         elif path == "/api/mcp/reconnect":
             self._handle_mcp_reconnect()
+        elif path == "/api/persona/preview":
+            self._handle_persona_preview()
         else:
             self._error("没有这个地址", 404)
 
@@ -667,6 +710,11 @@ class ConfigServer:
             "llm": _llm_status(),
             "gpu": _gpu(),
             "mcp": mcp_tools.hub().summary(),
+            "persona": {
+                "id": persona.current_id(),
+                "name": persona.current()["name"],
+                "emoji": persona.current()["emoji"],
+            },
             "settings_file": str(settings_store.PATH),
             "settings_exists": settings_store.PATH.exists(),
         }

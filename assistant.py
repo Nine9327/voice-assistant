@@ -57,6 +57,7 @@ import apps  # noqa: E402
 import config  # noqa: E402
 import llm  # noqa: E402
 import mcp_tools  # noqa: E402
+import persona  # noqa: E402
 import search  # noqa: E402
 from rich.console import Console  # noqa: E402
 from rich.panel import Panel  # noqa: E402
@@ -293,6 +294,33 @@ def trim_history(history: list[dict]) -> list[dict]:
     return [history[0]] + history[1:][-keep:]
 
 
+def handle_persona_command(text: str, speaker, live: LiveState | None = None) -> str | None:
+    """「换成傲娇」这类换性格指令就地处理。
+
+    返回播报的那句话；None 表示不接管，照常走大模型。
+    不走大模型有两个原因：一是改人设本来就是查表，二是新性格要从**这一句**开始生效，
+    交给模型回答的话，回答本身还是旧性格的口吻。
+    """
+    target = persona.parse_switch(text)
+    if target is None:
+        return None
+
+    preset = persona.get(target)
+    console.print(f"[dim]性格指令：{preset['name']}[/dim]")
+    if live is not None:
+        live.update("thinking", heard=text, reply="", note=f"正在换成{preset['name']}…")
+    result = persona.apply(target, use_voice=getattr(config, "PERSONA_VOICE", True))
+    say = result["say"]
+    if live is not None:
+        live.update("speaking", reply=say)
+    if speaker is not None:
+        speaker.say(say)
+        speaker.wait_done()
+    if live is not None:
+        live.update("idle", reply=say, note="")
+    return say
+
+
 # 「打开 A 然后 B」这类复合指令不该被当成本机指令硬接
 _COMPLEX_WORDS = ("然后", "接着", "并且", "顺便", "之后", "以后", "帮我给", "帮我写",
                   "搜索", "查一下", "发消息", "发个", "播放")
@@ -337,6 +365,11 @@ def handle_app_command(text: str, speaker, live: LiveState | None = None) -> str
 
 def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None = None) -> str:
     """跑一轮大模型，边流式打印边逐句播报。返回完整回复。"""
+    # 人设可能在会话中途被改（说了句「换成傲娇」），history[0] 是启动时那份，
+    # 每次开口前统一同步一次。内容没变时是同一个字符串，不影响 Ollama 的前缀缓存。
+    if history and history[0].get("role") == "system":
+        history[0]["content"] = persona.system_prompt()
+
     splitter = None
     if speaker is not None:
         from tts import SentenceSplitter
@@ -729,14 +762,16 @@ def main() -> None:
         speaker.warmup()
         console.print("[dim]语音合成就绪[/dim]")
 
-    history = [{"role": "system", "content": config.SYSTEM_PROMPT}]
+    history = [{"role": "system", "content": persona.system_prompt()}]
 
     # 纯文本模式：验证「大模型 + 播报」这一段
     if args.text:
         console.print(f"[cyan]你（文本）：[/cyan]{args.text}")
         live.update("thinking", heard=args.text)
         console.print("[green]助手：[/green]", end="")
-        app_say = handle_app_command(args.text, speaker, live)
+        app_say = handle_persona_command(args.text, speaker, live)
+        if app_say is None:
+            app_say = handle_app_command(args.text, speaker, live)
         if app_say is not None:
             console.print(app_say)
         else:
@@ -915,8 +950,10 @@ def main() -> None:
 
             INTERRUPT.clear()  # 录音期间点的「停下」不该把回答也掐掉
 
-            # 先看是不是「打开某应用」这类本机指令：查表就能办的事不必惊动大模型
-            app_say = handle_app_command(user_text, speaker, live)
+            # 先看是不是「打开某应用」「换成傲娇」这类本机指令：查表就能办的事不必惊动大模型
+            app_say = handle_persona_command(user_text, speaker, live)
+            if app_say is None:
+                app_say = handle_app_command(user_text, speaker, live)
             if app_say is not None:
                 console.print(app_say)
                 history.append({"role": "user", "content": user_text})

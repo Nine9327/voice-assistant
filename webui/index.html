@@ -156,6 +156,31 @@
   .tool-chip b { color: var(--text); font-weight: 500; }
   .empty { color: var(--muted); font-size: 12.5px; border: 1px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; }
 
+  /* ---------- 性格卡片 ---------- */
+  .persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
+  .persona {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 13px; cursor: pointer; text-align: left; color: var(--text);
+    font: inherit; transition: border-color .15s, background .15s;
+  }
+  .persona:hover { border-color: #3c4557; }
+  .persona[aria-pressed="true"] { border-color: var(--accent); background: #182234; }
+  .persona .p-top { display: flex; align-items: center; gap: 7px; }
+  .persona .p-emoji { font-size: 16px; line-height: 1; }
+  .persona .p-name { font-weight: 500; font-size: 13.5px; }
+  .persona .p-on { margin-left: auto; font-size: 11px; color: var(--accent); opacity: 0; }
+  .persona[aria-pressed="true"] .p-on { opacity: 1; }
+  .persona .p-tag { color: var(--muted); font-size: 11.5px; margin-top: 6px; line-height: 1.5; }
+  .persona .p-voice { color: #5f6779; font-size: 11px; margin-top: 7px; }
+  .prompt-view {
+    white-space: pre-wrap; word-break: break-word; margin: 8px 0 0;
+    font: 12px/1.65 "Cascadia Code", Consolas, monospace;
+    color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; max-height: 240px; overflow: auto;
+  }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+  details summary:hover { color: var(--text); }
+
   footer.bar {
     position: fixed; left: 0; right: 0; bottom: 0;
     background: rgba(16,18,24,.92); backdrop-filter: blur(10px);
@@ -195,6 +220,9 @@
       <div class="nav-title">开始</div>
       <button type="button" class="nav" data-module="overview">总览<span class="n-dot"></span></button>
 
+      <div class="nav-title">助手</div>
+      <button type="button" class="nav" data-module="persona">性格预设<span class="n-dot"></span></button>
+
       <div class="nav-title">模型与工具</div>
       <button type="button" class="nav" data-module="llm">大模型服务<span class="n-dot"></span></button>
       <button type="button" class="nav" data-module="mcp">MCP 工具<span class="n-dot"></span></button>
@@ -227,6 +255,58 @@
       <p class="hint">点任意一张卡片进入对应模块。左侧菜单上的橙点表示那个模块有改动还没保存。</p>
       <div class="tiles" id="ov-tiles"></div>
       <div class="note" id="ov-tip">改动点右下角「保存并应用」即刻生效，并写入 settings.json，下次启动自动沿用。</div>
+    </section>
+
+    <!-- ==================== 性格预设 ==================== -->
+    <section class="card page hidden" data-module="persona">
+      <h2>性格预设 <span class="badge" id="persona-badge">—</span></h2>
+      <p class="hint">
+        同一句回答，换个性格就是另一种味道。选一张卡片，点右下角「保存并应用」；
+        也可以直接对它说「换成傲娇」，当场就换。
+      </p>
+
+      <div class="persona-grid" id="persona-grid"></div>
+
+      <div class="field" style="margin-top:16px">
+        <label for="PERSONA_EXTRA">额外要求（叠在所选性格之上，可留空）</label>
+        <textarea id="PERSONA_EXTRA" rows="2" placeholder="比如：别叫我主人；不确定的事就说不知道"></textarea>
+        <div class="note">所有性格都会遵守这一条，用来微调称呼、口头禅、回答长度这类细节。</div>
+      </div>
+
+      <div class="field hidden" data-group="persona-custom">
+        <label for="PERSONA_PROMPT">自定义人设（它叫什么、什么脾气、怎么说话）</label>
+        <textarea id="PERSONA_PROMPT" rows="5" placeholder="你叫……。性格……。说话……。"></textarea>
+        <div class="note">
+          写法建议：一句身份、一句脾气、一句说话习惯就够了。
+          不必写「不许用 Markdown」—— 那是系统的硬规则，任何性格都绕不过去。
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:16px">
+        <label class="check">
+          <input type="checkbox" id="PERSONA_VOICE">
+          <span>换性格时连带换配套音色与语速</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          勾上后选卡片会顺手改「语音合成」里的音色，保存前都能反悔。关掉就只改说话风格。
+          离线系统语音没有这套映射，不受影响。
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="persona-test-q">试一句（用选中的性格回答，不保存也不进入对话历史）</label>
+        <div class="row">
+          <input type="text" id="persona-test-q" placeholder="今天有点累">
+          <button class="act shrink" id="btn-persona-test">试一下</button>
+        </div>
+        <div class="status" id="persona-test-status"></div>
+      </div>
+
+      <details>
+        <summary>看看模型实际收到的人设提示词</summary>
+        <pre class="prompt-view" id="persona-prompt-view">—</pre>
+        <button class="act tiny" id="btn-persona-view" style="margin-top:8px">按当前选择重新生成</button>
+      </details>
     </section>
 
     <!-- ==================== 大模型服务 ==================== -->
@@ -673,6 +753,7 @@ const LOCALE_NAME = {
 // 模块定义：标题、副标题决定切换时的页头文案
 const MODULES = {
   overview: { title: "总览", sub: "一眼看全当前配置和运行状态。" },
+  persona: { title: "性格预设", sub: "决定「它是个什么样的人」：语气、称呼、脾气。" },
   llm: { title: "大模型服务", sub: "决定「怎么回答」：本地 Ollama，或任意 OpenAI 兼容接口。" },
   mcp: { title: "MCP 工具", sub: "给模型接上外部能力，什么时候调用由它自己判断。" },
   asr: { title: "语音识别", sub: "决定「怎么听懂你」：本地 whisper，或网络识别接口。" },
@@ -851,6 +932,11 @@ function renderOverview(c, r) {
   const llmOk = r.llm && r.llm.ok;
   const tiles = [
     {
+      module: "persona", label: "性格", dot: "ok",
+      value: (PERSONA.list.find((p) => p.id === c.PERSONA_PRESET) || {}).name || "小蓝",
+      note: c.PERSONA_EXTRA ? "额外要求：" + String(c.PERSONA_EXTRA).slice(0, 24) : "选中后点保存即刻生效",
+    },
+    {
       module: "llm", label: "大模型", dot: llmOk ? "ok" : "bad",
       value: c.LLM_PROVIDER === "openai" ? "网络 · " + c.OPENAI_MODEL : "本地 · " + c.LLM_MODEL,
       note: llmOk ? "已连接" : ((r.llm && r.llm.detail) || "未连接"),
@@ -945,6 +1031,13 @@ function renderState(data) {
   const mtools = Number(c.MCP_MAX_TOOLS ?? 24);
   $("MCP_MAX_TOOLS").value = mtools;
   $("MCP_MAX_TOOLS-v").textContent = String(mtools);
+
+  // 性格：保存后重新读取时把选择、自定义人设一起刷新回来
+  PERSONA.id = c.PERSONA_PRESET || "default";
+  $("PERSONA_EXTRA").value = c.PERSONA_EXTRA || "";
+  $("PERSONA_PROMPT").value = c.PERSONA_PROMPT || "";
+  $("PERSONA_VOICE").checked = !!c.PERSONA_VOICE;
+  if (PERSONA.list.length) renderPersonaGrid();
 
   // 唤醒
   $("WAKE_ENABLED").checked = !!c.WAKE_ENABLED;
@@ -1570,6 +1663,126 @@ $("btn-mcp-reconnect").addEventListener("click", async () => {
   }
 });
 
+// ---------------- 性格预设 ----------------
+const PERSONA = { list: [], id: "default", timer: null };
+
+function personaCard(p) {
+  const voice = p.voice
+    ? "音色 " + String(p.voice.voice).replace("Neural", "") + " · " + p.voice.rate
+    : "沿用当前音色";
+  return '<button type="button" class="persona" data-id="' + p.id + '" aria-pressed="' +
+    (p.id === PERSONA.id) + '" title="' + escapeHtml(p.desc || "") + '">' +
+    '<div class="p-top"><span class="p-emoji">' + p.emoji + "</span>" +
+    '<span class="p-name">' + escapeHtml(p.name) + "</span>" +
+    '<span class="p-on">已选</span></div>' +
+    '<div class="p-tag">' + escapeHtml(p.tagline) + "</div>" +
+    '<div class="p-voice">' + escapeHtml(voice) + "</div></button>";
+}
+
+function renderPersonaGrid() {
+  const grid = $("persona-grid");
+  if (!PERSONA.list.length) {
+    grid.innerHTML = '<div class="empty">性格列表还没读到</div>';
+    return;
+  }
+  grid.innerHTML = PERSONA.list.map(personaCard).join("");
+  const cur = PERSONA.list.find((p) => p.id === PERSONA.id);
+  $("persona-badge").textContent = cur ? cur.name : "—";
+  const custom = document.querySelector('[data-group="persona-custom"]');
+  if (custom) custom.classList.toggle("hidden", PERSONA.id !== "custom");
+}
+
+function setVoiceOption(name) {
+  const sel = $("TTS_VOICE");
+  if (!Array.from(sel.options).some((o) => o.value === name)) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = String(name).replace("Neural", "") + " · 预设音色";
+    sel.appendChild(o);
+  }
+  sel.value = name;
+}
+
+function fillPersonaVoice(id) {
+  const p = PERSONA.list.find((x) => x.id === id);
+  if (!p || !p.voice) return false;
+  setVoiceOption(p.voice.voice);
+  $("TTS_RATE").value = p.voice.rate;
+  $("TTS_PITCH").value = p.voice.pitch;
+  markDirty("tts");
+  return true;
+}
+
+async function refreshPersonaPrompt() {
+  const params = new URLSearchParams({ preset: PERSONA.id, extra: $("PERSONA_EXTRA").value });
+  try {
+    const data = await fetch("/api/persona?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    $("persona-prompt-view").textContent = data.composed || "（没有人设，只有系统的格式规则）";
+  } catch (err) {
+    $("persona-prompt-view").textContent = "读取失败：" + err;
+  }
+}
+
+function selectPersona(id) {
+  PERSONA.id = id;
+  renderPersonaGrid();
+  if ($("PERSONA_VOICE").checked) fillPersonaVoice(id);
+  markDirty("persona");
+  refreshPersonaPrompt();
+}
+
+$("persona-grid").addEventListener("click", (ev) => {
+  const card = ev.target.closest(".persona[data-id]");
+  if (card) selectPersona(card.dataset.id);
+});
+
+$("PERSONA_VOICE").addEventListener("change", (ev) => {
+  if (ev.target.checked) fillPersonaVoice(PERSONA.id);
+});
+
+$("PERSONA_EXTRA").addEventListener("input", () => {
+  clearTimeout(PERSONA.timer);
+  PERSONA.timer = setTimeout(refreshPersonaPrompt, 400);
+});
+
+$("btn-persona-view").addEventListener("click", refreshPersonaPrompt);
+
+$("btn-persona-test").addEventListener("click", async () => {
+  const target = $("persona-test-status");
+  const q = $("persona-test-q").value.trim() || "今天有点累";
+  const cur = PERSONA.list.find((p) => p.id === PERSONA.id);
+  status(target, "正在用「" + (cur ? cur.name : PERSONA.id) + "」回答…", "");
+  try {
+    const data = await fetch("/api/persona/preview", {
+      method: "POST", headers: HEADERS,
+      body: JSON.stringify({ preset: PERSONA.id, question: q, extra: $("PERSONA_EXTRA").value }),
+    }).then((r) => r.json());
+    if (!data.ok) {
+      status(target, "✗ " + (data.error || "没答上来"), "bad");
+      return;
+    }
+    status(target, "✓ " + data.name + "（" + data.ms + "ms）：" + data.reply, "ok");
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+async function loadPersona() {
+  try {
+    const data = await fetch("/api/persona", { headers: HEADERS }).then((r) => r.json());
+    PERSONA.list = data.presets || [];
+    PERSONA.id = data.current || "default";
+    $("PERSONA_EXTRA").value = data.extra || "";
+    $("PERSONA_PROMPT").value = data.custom || "";
+    $("PERSONA_VOICE").checked = !!data.use_voice;
+    renderPersonaGrid();
+    $("persona-prompt-view").textContent = data.composed || "—";
+  } catch (err) {
+    $("persona-grid").innerHTML = '<div class="empty">读取性格列表失败：' + escapeHtml(err) + "</div>";
+  }
+}
+
 // ---------------- 大模型服务 ----------------
 function syncPreset() {
   const found = PRESETS.find((p) => p.base && p.base === $("OPENAI_BASE").value.trim());
@@ -1733,10 +1946,20 @@ $("btn-save").addEventListener("click", async () => {
     MCP_MAX_ROUNDS: Number($("MCP_MAX_ROUNDS").value),
     MCP_TIMEOUT: Number($("MCP_TIMEOUT").value),
     MCP_MAX_TOOLS: Number($("MCP_MAX_TOOLS").value),
+    PERSONA_PRESET: PERSONA.id,
+    PERSONA_PROMPT: $("PERSONA_PROMPT").value.trim(),
+    PERSONA_EXTRA: $("PERSONA_EXTRA").value.trim(),
+    PERSONA_VOICE: $("PERSONA_VOICE").checked,
   };
   if (payload.WAKE_ENABLED && !payload.WAKE_PHRASE) {
     // 空提示词会让唤醒永远不命中，等于悄悄失效，不如直接拦下来
     foot("唤醒提示词不能为空：要么填一句，要么把「常开唤醒」关掉", "bad");
+    btn.disabled = false;
+    return;
+  }
+  if (payload.PERSONA_PRESET === "custom" && !payload.PERSONA_PROMPT) {
+    // 自定义人设空着，等于悄悄退回默认语气，说清楚比让它「看着生效了」好
+    foot("选了「自定义」但人设是空的，它会退回默认语气。补一句人设，或换回某个预设", "bad");
     btn.disabled = false;
     return;
   }
@@ -1794,12 +2017,12 @@ $("btn-save").addEventListener("click", async () => {
   }
 });
 
-// 键盘：1~9 直接跳模块，省得来回点
+// 键盘：alt+数字 直接跳模块，省得来回点
 document.addEventListener("keydown", (ev) => {
   if (ev.target.matches("input, textarea, select")) return;
   if (!ev.altKey) return;
-  const order = ["overview", "llm", "mcp", "asr", "tts", "wake", "search", "apps", "misc"];
-  const idx = Number(ev.key) - 1;
+  const order = ["overview", "persona", "llm", "mcp", "asr", "tts", "wake", "search", "apps", "misc"];
+  const idx = ev.key === "0" ? 9 : Number(ev.key) - 1;
   if (order[idx]) { ev.preventDefault(); showModule(order[idx]); }
 });
 
@@ -1807,6 +2030,7 @@ document.addEventListener("keydown", (ev) => {
 showModule((location.hash || "").slice(1) || "overview", { hash: false });
 window.addEventListener("hashchange", () => showModule(location.hash.slice(1) || "overview", { hash: false }));
 load();
+loadPersona();
 loadMcp();
 loadApps();
 setInterval(pollLive, 2000);

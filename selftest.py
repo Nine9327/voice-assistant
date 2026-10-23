@@ -12,6 +12,7 @@ import time
 import numpy as np
 
 import config
+import persona
 
 
 def decode_to_16k(path: str) -> np.ndarray:
@@ -66,7 +67,7 @@ def main() -> None:
         speaker.warmup()
 
     history = [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
+        {"role": "system", "content": persona.system_prompt()},
         {"role": "user", "content": heard},
     ]
     print("[4/4] 大模型回答")

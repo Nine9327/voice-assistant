@@ -16,12 +16,20 @@ OPENAI_BASE = "https://api.openai.com/v1"
 OPENAI_KEY = ""
 OPENAI_MODEL = "gpt-4o-mini"
 
-SYSTEM_PROMPT = """你是一个本地运行的语音助手。你的回答会被 TTS 直接朗读，请严格遵守：
+# 只写「格式约束」，不写性格 —— 性格由 persona.py 的预设拼在前面。
+# 这样换性格不会把朗读规则换掉（漏一条就会把「**」念出来）。
+SYSTEM_PROMPT = """【说话方式，任何情况下都要遵守】
 1. 用口语化、简短的中文回答，一般不超过三句话；
 2. 禁止使用 Markdown、列表、代码块、表情符号、括号注释、链接；
 3. 不要复述用户的问题，直接给答案；
 4. 长数字、单位、英文缩写要用中文口语习惯表达；
 5. 不确定的事情直接说不确定，不要编造。"""
+
+# ---------------- 性格 ----------------
+PERSONA_PRESET = "default"        # 见 persona.py：default/lively/calm/pro/tsundere/sassy/kid/butler/custom
+PERSONA_PROMPT = ""               # 预设选 custom 时用这段人设
+PERSONA_EXTRA = ""                # 叠加在任何性格上的额外要求（如「别叫我主人」）
+PERSONA_VOICE = True              # 换性格时连带换配套音色与语速
 
 # ---------------- 语音识别 ----------------
 ASR_PROVIDER = "local"            # local=本地 faster-whisper / openai=网络识别接口

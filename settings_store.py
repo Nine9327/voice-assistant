@@ -50,6 +50,16 @@ SCHEMA: dict[str, dict[str, Any]] = {
     "OPENAI_KEY": {"type": "secret", "label": "API Key", "group": "openai"},
     "OPENAI_MODEL": {"type": "str", "label": "模型名称", "group": "openai"},
 
+    # ---------- 性格 ----------
+    "PERSONA_PRESET": {
+        "type": "choice",
+        "choices": ["default", "lively", "calm", "pro", "tsundere", "sassy", "kid", "butler", "custom"],
+        "label": "性格预设", "group": "persona",
+    },
+    "PERSONA_PROMPT": {"type": "str", "label": "自定义人设", "group": "persona"},
+    "PERSONA_EXTRA": {"type": "str", "label": "额外要求", "group": "persona"},
+    "PERSONA_VOICE": {"type": "bool", "label": "连带换音色", "group": "persona"},
+
     # ---------- 语音合成服务 ----------
     "TTS_ENGINE": {
         "type": "choice", "choices": ["edge", "sapi"],
