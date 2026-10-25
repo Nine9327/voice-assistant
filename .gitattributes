@@ -1,0 +1,18 @@
+# 仓库内统一存 LF，检出时按平台转换
+* text=auto
+
+# Windows 批处理必须是 CRLF + 纯 ASCII，否则 cmd.exe 解析时会串行报错
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+
+# git 钩子必须保持 LF：CRLF 会让 sh 报 bad interpreter，钩子直接被跳过
+.githooks/* text eol=lf
+
+# 二进制资源，别让 git 做文本转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.mp3 binary
+*.wav binary
+*.ico binary

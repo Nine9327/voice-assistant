@@ -1,0 +1,48 @@
+#!/bin/sh
+# 提交前的敏感信息检查。
+# 安装：git config core.hooksPath .githooks   （只需执行一次）
+# 紧急跳过：git commit --no-verify          （不推荐，等于裸奔）
+set -u
+
+root=$(git rev-parse --show-toplevel) || exit 0
+cd "$root" || exit 0
+
+PY=""
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+elif [ -f "/d/miniconda3/envs/voice-assistant/python.exe" ]; then
+    PY="/d/miniconda3/envs/voice-assistant/python.exe"
+elif [ -f "D:/miniconda3/envs/voice-assistant/python.exe" ]; then
+    PY="D:/miniconda3/envs/voice-assistant/python.exe"
+fi
+
+if [ -n "$PY" ]; then
+    "$PY" tools/check_secrets.py --staged || exit 1
+    exit 0
+fi
+
+# 没有 Python 也要有底线：文件名 + 密钥特征两条硬规则，用 grep 兜底
+echo "[pre-commit] 没找到可用的 Python，退回基础规则检查"
+bad=0
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+    case "$f" in
+        settings.json|settings.json.*|*.bak|.env|.env.*|*.pem|*.key|*.log|.runtime/*|models/*)
+            echo "  [X] $f <- 本地配置 / 私钥 / 日志，不该入库"
+            bad=1
+            ;;
+    esac
+done
+
+if git diff --cached -U0 2>/dev/null | grep -nE '^\+.*(sk-[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'; then
+    echo "  [X] 暂存内容里发现密钥特征"
+    bad=1
+fi
+
+if [ "$bad" -eq 1 ]; then
+    echo ""
+    echo "提交已阻止。密钥请写到 settings.json 或环境变量里。"
+    exit 1
+fi
+exit 0

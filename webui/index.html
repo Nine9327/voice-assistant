@@ -1,0 +1,2513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音助手 · 配置</title>
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #171a21;
+    --panel-2: #1d212a;
+    --line: #272c37;
+    --text: #e7eaf0;
+    --muted: #8c94a8;
+    --accent: #4f8cff;
+    --accent-dim: #2a4a86;
+    --ok: #3ecf8e;
+    --warn: #f5a524;
+    --danger: #ff6b6b;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 20% -10%, #182033 0%, var(--bg) 55%);
+    color: var(--text);
+    font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: 26px 20px 120px;
+  }
+
+  /* ---------- 骨架：左侧模块导航 + 右侧内容 ---------- */
+  .shell { display: flex; gap: 26px; max-width: 1200px; margin: 0 auto; align-items: flex-start; }
+  .side { width: 208px; flex: none; position: sticky; top: 24px; }
+  .brand { padding: 0 8px 10px; }
+  .brand-name { font-size: 15px; font-weight: 600; letter-spacing: .3px; }
+  .brand-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .nav-title { color: #5f6779; font-size: 11px; letter-spacing: .7px; margin: 15px 9px 6px; }
+  nav { display: flex; flex-direction: column; gap: 2px; }
+  nav button.nav {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+    text-align: left; padding: 8px 11px; border-radius: 8px; cursor: pointer;
+    font: inherit; font-size: 13px; transition: background .15s, color .15s, border-color .15s;
+  }
+  nav button.nav:hover { background: var(--panel); color: var(--text); }
+  nav button.nav[aria-current="page"] {
+    background: var(--panel); border-color: var(--line); color: var(--text); font-weight: 500;
+  }
+  nav button.nav .n-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
+    opacity: 0; margin-left: auto; flex: none; transition: opacity .15s;
+  }
+  nav button.nav.dirty .n-dot { opacity: 1; }
+  .main { flex: 1; min-width: 0; max-width: 880px; }
+  .side-foot { margin-top: 18px; padding: 0 9px; color: #5a6274; font-size: 11px; line-height: 1.7; word-break: break-all; }
+
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 19px; margin: 0 0 4px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .chips { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 11px; font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(62,207,142,.6); }
+  .dot.bad { background: var(--danger); }
+  .dot.warn { background: var(--warn); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .card + .card { margin-top: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .badge { font-size: 11px; font-weight: 400; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+
+  .seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; margin-bottom: 14px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--muted);
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    transition: background .15s, color .15s; font-family: inherit;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent-dim); color: #dbe7ff; }
+
+  .field { margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+  input[type=text], input[type=password], select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; font-family: inherit; outline: none;
+    transition: border-color .15s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  input::placeholder, textarea::placeholder { color: #5b6376; }
+  textarea {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; min-height: 44px; resize: vertical;
+    padding: 8px 10px; font: 12.5px/1.55 "Cascadia Code", Consolas, monospace; outline: none;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; min-width: 0; }
+  .row > .shrink { flex: 0 0 auto; }
+
+  .inline { display: flex; align-items: center; gap: 10px; }
+  .inline input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+  .val { font-variant-numeric: tabular-nums; color: var(--text); min-width: 46px; text-align: right; font-size: 13px; }
+
+  .check { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; margin: 0; cursor: pointer; }
+  .check input[type=checkbox] { width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
+  .check span { color: var(--text); }
+
+  button.act {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 13px; cursor: pointer; font-size: 13px; font-family: inherit;
+    transition: border-color .15s, background .15s; white-space: nowrap;
+  }
+  button.act:hover { border-color: #3c4557; }
+  button.act:disabled { opacity: .5; cursor: default; }
+  button.act.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.act.primary:hover { background: #5f97ff; }
+  button.act.tiny { padding: 4px 9px; font-size: 12px; }
+  button.act.danger { color: var(--danger); border-color: #4a2a2e; }
+
+  .status { font-size: 12px; margin-top: 8px; color: var(--muted); min-height: 17px; word-break: break-word; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--danger); }
+  .note { font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px; margin-top: 12px; }
+  h3.sub { font-size: 13px; font-weight: 600; color: var(--text); margin: 18px 0 10px; }
+  .hint2 { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin: 5px 0 0; }
+  audio { width: 100%; margin-top: 10px; height: 34px; }
+
+  /* ---------- 总览 ---------- */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 11px; }
+  .tile {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; transition: border-color .15s;
+  }
+  .tile:hover { border-color: #3c4557; }
+  .tile .t-label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .tile .t-value { font-size: 13.5px; margin-top: 6px; word-break: break-word; }
+  .tile .t-note { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+
+  /* ---------- MCP 服务器卡片 ---------- */
+  .mcp-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); }
+  .mcp-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .mcp-head .mcp-name { flex: 1 1 150px; min-width: 120px; }
+  .mcp-head select { flex: 0 0 118px; width: 118px; }
+  .mcp-sub { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .mcp-sub.single { grid-template-columns: 1fr; }
+  .mcp-tools { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tool-chip { font-size: 11.5px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; color: var(--muted); }
+  .tool-chip b { color: var(--text); font-weight: 500; }
+  .empty { color: var(--muted); font-size: 12.5px; border: 1px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; }
+  .meter { position: relative; height: 10px; border-radius: 5px; background: #1b2130; overflow: hidden; margin-top: 8px; }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); transition: width .12s linear; }
+  .meter .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff9f43; }
+
+  /* ---------- 性格卡片 ---------- */
+  .persona-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
+  .persona {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 13px; cursor: pointer; text-align: left; color: var(--text);
+    font: inherit; transition: border-color .15s, background .15s;
+  }
+  .persona:hover { border-color: #3c4557; }
+  .persona[aria-pressed="true"] { border-color: var(--accent); background: #182234; }
+  .persona .p-top { display: flex; align-items: center; gap: 7px; }
+  .persona .p-emoji { font-size: 16px; line-height: 1; }
+  .persona .p-name { font-weight: 500; font-size: 13.5px; }
+  .persona .p-on { margin-left: auto; font-size: 11px; color: var(--accent); opacity: 0; }
+  .persona[aria-pressed="true"] .p-on { opacity: 1; }
+  .persona .p-tag { color: var(--muted); font-size: 11.5px; margin-top: 6px; line-height: 1.5; }
+  .persona .p-voice { color: #5f6779; font-size: 11px; margin-top: 7px; }
+  .prompt-view {
+    white-space: pre-wrap; word-break: break-word; margin: 8px 0 0;
+    font: 12px/1.65 "Cascadia Code", Consolas, monospace;
+    color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; max-height: 240px; overflow: auto;
+  }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-top: 14px; }
+  details summary:hover { color: var(--text); }
+
+  footer.bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(16,18,24,.92); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line); padding: 12px 20px;
+  }
+  .bar-in { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+  .bar-in .msg { flex: 1; font-size: 12.5px; color: var(--muted); }
+  .bar-in .msg.ok { color: var(--ok); }
+  .bar-in .msg.bad { color: var(--danger); }
+  .bar-in .msg.warn { color: var(--warn); }
+
+  .hidden { display: none !important; }
+
+  /* 启动进度横幅：模型加载期间固定在页面顶部 */
+  .boot-banner {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 50; padding: 8px 18px; border-radius: 999px;
+    background: #2a2410; color: #f0c860; border: 1px solid #6b5a20;
+    font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  }
+  code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+
+  @media (max-width: 900px) {
+    body { padding: 18px 12px 130px; }
+    .shell { flex-direction: column; gap: 14px; }
+    .side { position: static; width: 100%; }
+    .brand { padding: 0 6px 8px; }
+    nav { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+    nav button.nav { width: auto; white-space: nowrap; }
+    .nav-title { display: none; }
+    .side-foot { display: none; }
+    .main { max-width: 100%; }
+    .mcp-sub { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="boot-banner" class="boot-banner hidden"></div>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">
+      <div class="brand-name">语音助手</div>
+      <div class="brand-sub">本地控制台</div>
+    </div>
+    <nav id="nav">
+      <div class="nav-title">开始</div>
+      <button type="button" class="nav" data-module="overview">总览<span class="n-dot"></span></button>
+
+      <div class="nav-title">助手</div>
+      <button type="button" class="nav" data-module="persona">性格预设<span class="n-dot"></span></button>
+
+      <div class="nav-title">模型与工具</div>
+      <button type="button" class="nav" data-module="llm">大模型服务<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="mcp">MCP 工具<span class="n-dot"></span></button>
+
+      <div class="nav-title">语音链路</div>
+      <button type="button" class="nav" data-module="asr">语音识别<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="tts">语音合成<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="wake">唤醒与形象<span class="n-dot"></span></button>
+
+      <div class="nav-title">行为</div>
+      <button type="button" class="nav" data-module="barge">语音打断<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="search">联网搜索<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="apps">语音打开应用<span class="n-dot"></span></button>
+      <button type="button" class="nav" data-module="misc">交互与页面<span class="n-dot"></span></button>
+    </nav>
+    <div class="side-foot" id="side-foot"></div>
+  </aside>
+
+  <main class="main">
+    <header>
+      <div>
+        <h1 id="page-title">总览</h1>
+        <div class="sub" id="page-sub">一眼看全当前配置和运行状态。</div>
+      </div>
+      <div class="chips" id="chips"></div>
+    </header>
+
+    <!-- ==================== 总览 ==================== -->
+    <section class="card page" data-module="overview">
+      <h2>当前状态</h2>
+      <p class="hint">点任意一张卡片进入对应模块。左侧菜单上的橙点表示那个模块有改动还没保存。</p>
+      <div class="tiles" id="ov-tiles"></div>
+      <div class="note" id="ov-tip">改动点右下角「保存并应用」即刻生效，并写入 settings.json，下次启动自动沿用。</div>
+    </section>
+
+    <!-- ==================== 性格预设 ==================== -->
+    <section class="card page hidden" data-module="persona">
+      <h2>性格预设 <span class="badge" id="persona-badge">—</span></h2>
+      <p class="hint">
+        同一句回答，换个性格就是另一种味道。选一张卡片，点右下角「保存并应用」；
+        也可以直接对它说「换成傲娇」，当场就换。
+      </p>
+
+      <div class="persona-grid" id="persona-grid"></div>
+
+      <div class="field" style="margin-top:16px">
+        <label for="PERSONA_EXTRA">额外要求（叠在所选性格之上，可留空）</label>
+        <textarea id="PERSONA_EXTRA" rows="2" placeholder="比如：别叫我主人；不确定的事就说不知道"></textarea>
+        <div class="note">所有性格都会遵守这一条，用来微调称呼、口头禅、回答长度这类细节。</div>
+      </div>
+
+      <div class="field hidden" data-group="persona-custom">
+        <label for="PERSONA_PROMPT">自定义人设（它叫什么、什么脾气、怎么说话）</label>
+        <textarea id="PERSONA_PROMPT" rows="5" placeholder="你叫……。性格……。说话……。"></textarea>
+        <div class="note">
+          写法建议：一句身份、一句脾气、一句说话习惯就够了。
+          不必写「不许用 Markdown」—— 那是系统的硬规则，任何性格都绕不过去。
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:16px">
+        <label class="check">
+          <input type="checkbox" id="PERSONA_VOICE">
+          <span>换性格时连带换配套音色与语速</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          勾上后选卡片会顺手改「语音合成」里的音色，保存前都能反悔。关掉就只改说话风格。
+          离线系统语音没有这套映射，不受影响。
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="persona-test-q">试一句（用选中的性格回答，不保存也不进入对话历史）</label>
+        <div class="row">
+          <input type="text" id="persona-test-q" placeholder="今天有点累">
+          <button class="act shrink" id="btn-persona-test">试一下</button>
+        </div>
+        <div class="status" id="persona-test-status"></div>
+      </div>
+
+      <details>
+        <summary>看看模型实际收到的人设提示词</summary>
+        <pre class="prompt-view" id="persona-prompt-view">—</pre>
+        <button class="act tiny" id="btn-persona-view" style="margin-top:8px">按当前选择重新生成</button>
+      </details>
+    </section>
+
+    <!-- ==================== 大模型服务 ==================== -->
+    <section class="card page hidden" data-module="llm">
+      <h2>大模型服务 <span class="badge" id="llm-badge">—</span></h2>
+      <p class="hint">决定「怎么回答」。本地不联网，网络接口需要 API Key。</p>
+
+      <div class="field">
+        <label for="preset">我的服务（一个列表管全部，选中即切换）</label>
+        <div class="row">
+          <select id="preset"></select>
+          <button class="act shrink" id="btn-svc-add" title="把下面填的配置存成一个服务">存为服务</button>
+          <button class="act shrink danger" id="btn-svc-del">删除</button>
+        </div>
+        <div class="sub">本地模型和网络接口都在这一张表里：填好下面的参数点「存为服务」，以后在下拉里选它就能切过去。
+          网络接口不设预设，任何 OpenAI 兼容地址都能存；Key 只显示末四位。</div>
+      </div>
+
+      <div class="seg" data-target="LLM_PROVIDER">
+        <button type="button" data-value="ollama">本地 Ollama</button>
+        <button type="button" data-value="openai">网络接口</button>
+      </div>
+
+      <div data-group="llm-ollama">
+        <div class="field">
+          <label for="OLLAMA_HOST">服务地址</label>
+          <div class="row">
+            <input type="text" id="OLLAMA_HOST" placeholder="http://127.0.0.1:11434">
+            <button class="act shrink" id="btn-ollama-models">刷新模型</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="LLM_MODEL">模型</label>
+          <select id="LLM_MODEL"></select>
+        </div>
+        <div class="field">
+          <label>本地模型进程</label>
+          <div class="row">
+            <button class="act shrink" id="btn-ollama-start">启动本地模型</button>
+            <button class="act shrink danger" id="btn-ollama-stop">停止（释放显存）</button>
+          </div>
+          <div class="sub">助手启动时<strong>不会</strong>自动拉起 Ollama —— 它是你自己的服务，
+            可能还被别的程序用着。起停都点这里，或者你自己开 Ollama 也一样。</div>
+          <div class="status" id="ollama-status"></div>
+        </div>
+      </div>
+
+      <div data-group="llm-openai" class="hidden">
+        <div class="field">
+          <label for="OPENAI_BASE">接口地址（需以 /v1 结尾）</label>
+          <input type="text" id="OPENAI_BASE" placeholder="https://api.deepseek.com/v1">
+        </div>
+        <div class="field">
+          <label for="OPENAI_KEY">API Key</label>
+          <div class="row">
+            <input type="password" id="OPENAI_KEY" placeholder="sk-...（保存后只显示末四位）" autocomplete="off">
+            <button class="act shrink" id="btn-clear-key">清除</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="OPENAI_MODEL">模型名称</label>
+          <div class="row">
+            <input type="text" id="OPENAI_MODEL" list="model-suggest" placeholder="deepseek-chat">
+            <button class="act shrink" id="btn-openai-models">刷新模型</button>
+          </div>
+          <datalist id="model-suggest"></datalist>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>温度（越高越发散）</label>
+        <div class="inline">
+          <input type="range" id="LLM_TEMPERATURE" min="0" max="2" step="0.1">
+          <span class="val" id="LLM_TEMPERATURE-v">0.7</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="LLM_NUM_CTX">上下文长度</label>
+          <input type="text" id="LLM_NUM_CTX" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="MAX_HISTORY_TURNS">记忆轮数</label>
+          <input type="text" id="MAX_HISTORY_TURNS" inputmode="numeric">
+        </div>
+      </div>
+      <button class="act" id="btn-test">测试连接</button>
+      <div class="status" id="llm-status"></div>
+    </section>
+
+    <!-- ==================== MCP 工具 ==================== -->
+    <section class="card page hidden" data-module="mcp">
+      <h2>MCP 工具 <span class="badge" id="mcp-badge">—</span></h2>
+      <p class="hint">
+        MCP（Model Context Protocol）把文件、数据库、浏览器这类外部能力接到模型手上，
+        什么时候调用由模型自己判断 —— 你只管说「看看我桌面上那个文档」。
+      </p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="MCP_ENABLED">
+          <span>允许模型调用 MCP 工具</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          关掉后不启动任何服务器进程。开着时每轮对话会多做一次工具判定，回答通常慢零点几秒；
+          模型不支持工具调用会自动退回普通对话，不会报错。
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>最多调用轮数</label>
+          <div class="inline">
+            <input type="range" id="MCP_MAX_ROUNDS" min="0" max="6" step="1">
+            <span class="val" id="MCP_MAX_ROUNDS-v">3</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>单次工具超时</label>
+          <div class="inline">
+            <input type="range" id="MCP_TIMEOUT" min="3" max="60" step="1">
+            <span class="val" id="MCP_TIMEOUT-v">20s</span>
+          </div>
+        </div>
+      </div>
+      <div class="note" style="margin-bottom:12px">最多调用轮数指一轮对话里「调工具 → 再想」最多几轮，0 表示只判定不执行；单次工具超时到点就当没调成功。</div>
+
+      <div class="field">
+        <label>工具上限</label>
+        <div class="inline">
+          <input type="range" id="MCP_MAX_TOOLS" min="1" max="64" step="1">
+          <span class="val" id="MCP_MAX_TOOLS-v">24</span>
+        </div>
+        <div class="note">7B 模型的上下文有限，工具太多反而挑不准。只留真正常用的那几个。</div>
+      </div>
+
+      <div class="field" style="margin-top:16px">
+        <label>服务器列表</label>
+        <div id="mcp-list"></div>
+      </div>
+
+      <div class="row" style="align-items:flex-end">
+        <div class="field" style="margin-bottom:0">
+          <label for="mcp-preset">从示例添加</label>
+          <select id="mcp-preset"></select>
+        </div>
+        <button class="act shrink" id="btn-mcp-add">添加</button>
+        <button class="act shrink" id="btn-mcp-blank">空白服务器</button>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button class="act primary" id="btn-mcp-save">保存服务器</button>
+        <button class="act" id="btn-mcp-reconnect">全部重连</button>
+      </div>
+      <div class="status" id="mcp-status"></div>
+      <div class="note" id="mcp-file"></div>
+      <div class="note">
+        改完服务器清单要点这里的「保存服务器」；页面上方的开关与数值走右下角的「保存并应用」。
+        本地进程型服务器常见写法：命令 <code>npx</code>、参数 <code>-y @modelcontextprotocol/server-filesystem D:\workspace</code>。
+      </div>
+    </section>
+
+    <!-- ==================== 语音识别服务 ==================== -->
+    <section class="card page hidden" data-module="asr">
+      <h2>语音识别服务 <span class="badge" id="asr-badge">—</span></h2>
+      <p class="hint">决定「怎么听懂你」。本地快且不花钱，网络接口不吃显卡。</p>
+      <div class="seg" data-target="ASR_PROVIDER">
+        <button type="button" data-value="local">本地模型</button>
+        <button type="button" data-value="openai">网络接口</button>
+      </div>
+
+      <div data-group="asr-local">
+        <div class="field">
+          <label>运行设备</label>
+          <div class="seg" data-target="WHISPER_DEVICE">
+            <button type="button" data-value="cuda">GPU</button>
+            <button type="button" data-value="cpu">CPU</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="WHISPER_MODEL">模型大小</label>
+            <select id="WHISPER_MODEL">
+              <option value="auto">auto（推荐：有显卡用 medium，否则 small）</option>
+              <option value="tiny">tiny（最快，准确率一般）</option>
+              <option value="base">base</option>
+              <option value="small">small（省显存、响应最快）</option>
+              <option value="medium">medium（最准，多占约 1G 显存）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ASR_BEAM_SIZE">解码宽度</label>
+            <select id="ASR_BEAM_SIZE">
+              <option value="1">1（推荐，实测和 5 一样准）</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="5">5（慢三成，中文短句没提升）</option>
+            </select>
+          </div>
+        </div>
+
+        <h3 class="sub">听清人话的三个小开关</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="ASR_NORMALIZE"> 识别前把音量拉到满刻度</label>
+          <p class="hint2">麦克风增益偏低、或者人坐得远的时候能救回几个字。几乎不花时间，建议开着。</p>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="ASR_PROMPT_MODE">领域词提示</label>
+            <select id="ASR_PROMPT_MODE">
+              <option value="auto">auto（推荐：小模型才用）</option>
+              <option value="on">一直开着</option>
+              <option value="off">关掉</option>
+            </select>
+            <p class="hint2">把本机程序名等常见词提前告诉模型，实测能修掉「打开计识本」这类错字；
+              medium 自己够强，再给提示反而会被带偏，所以默认只在小模型上用。</p>
+          </div>
+          <div class="field">
+            <label for="ASR_HOTWORDS">你常说的词</label>
+            <input type="text" id="ASR_HOTWORDS" placeholder="用空格分隔，如：达梦 瀚高 张伟">
+            <p class="hint2">人名、地名、产品名这类专属词最容易听错，写在这里效果好。<span id="asr-prompt-count"></span></p>
+          </div>
+        </div>
+      </div>
+
+      <div data-group="asr-openai" class="hidden">
+        <div class="field">
+          <label for="ASR_REMOTE_MODEL">识别模型</label>
+          <input type="text" id="ASR_REMOTE_MODEL" placeholder="whisper-1">
+        </div>
+        <div class="note">网络识别复用「大模型服务」里填的接口地址和 API Key，无需重复填写。改完保存会自动重载识别服务。</div>
+      </div>
+      <div class="status" id="asr-status"></div>
+    </section>
+
+    <!-- ==================== 语音合成服务 ==================== -->
+    <section class="card page hidden" data-module="tts">
+      <h2>语音合成服务 <span class="badge" id="tts-badge">—</span></h2>
+      <p class="hint">决定「用什么声音说」。在线音质自然，离线断网也能用。</p>
+      <div class="seg" data-target="TTS_ENGINE">
+        <button type="button" data-value="edge">在线 edge-tts</button>
+        <button type="button" data-value="sapi">离线系统语音</button>
+        <button type="button" data-value="custom">自建服务</button>
+      </div>
+
+      <div data-group="tts-edge">
+        <div class="field">
+          <label for="TTS_VOICE">音色</label>
+          <select id="TTS_VOICE"></select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="TTS_RATE">语速</label>
+            <input type="text" id="TTS_RATE" placeholder="+12%">
+          </div>
+          <div class="field">
+            <label for="TTS_PITCH">音调</label>
+            <input type="text" id="TTS_PITCH" placeholder="+0Hz">
+          </div>
+        </div>
+      </div>
+
+      <div data-group="tts-sapi" class="hidden">
+        <div class="field">
+          <label for="SAPI_VOICE">系统声音</label>
+          <select id="SAPI_VOICE"></select>
+        </div>
+        <div class="note" id="sapi-note">语速与音量沿用上面的设置。离线引擎音质偏机械，但延迟极低、不花流量。</div>
+      </div>
+
+      <div data-group="tts-custom" class="hidden">
+        <div class="field">
+          <label for="TTS_CUSTOM_BASE">服务地址（需以 /v1 结尾）</label>
+          <input type="text" id="TTS_CUSTOM_BASE" placeholder="http://127.0.0.1:9880/v1">
+          <div class="sub">走 OpenAI 兼容的 <code>POST /audio/speech</code>。
+            IndexTTS2、GPT-SoVITS、CosyVoice 这类本地大模型都能接 ——
+            服务跑在哪儿、用什么显卡都行，本程序只管发文本、收音频。
+            <strong>官方 IndexTTS2 自带的是 Gradio 界面，需要套一层兼容层</strong>，
+            见 README「自建合成服务」。</div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="TTS_CUSTOM_VOICE">音色 / 参考音频</label>
+            <input type="text" id="TTS_CUSTOM_VOICE" placeholder="按服务约定，如 zh_female">
+          </div>
+          <div class="field">
+            <label for="TTS_CUSTOM_MODEL">模型名（可空）</label>
+            <input type="text" id="TTS_CUSTOM_MODEL" placeholder="tts-1">
+          </div>
+        </div>
+        <div class="field">
+          <label for="TTS_CUSTOM_KEY">API Key（服务要鉴权才填）</label>
+          <div class="row">
+            <input type="password" id="TTS_CUSTOM_KEY" placeholder="留空表示不鉴权" autocomplete="off">
+            <button class="act shrink" id="btn-clear-tts-key">清除</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="TTS_CUSTOM_FORMAT">返回格式</label>
+          <select id="TTS_CUSTOM_FORMAT">
+            <option value="wav">wav（多数本地服务）</option>
+            <option value="mp3">mp3</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="TTS_VOLUME">音量</label>
+        <input type="text" id="TTS_VOLUME" placeholder="+0%">
+      </div>
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="TTS_FALLBACK_SAPI">
+          <span>在线合成失败时，改用离线语音把话说完</span>
+        </label>
+        <div class="sub">断网、限流、超时的时候不会变成哑巴，只是声音会机械一些。不需要就关掉。</div>
+      </div>
+      <button class="act" id="btn-preview">试听当前配置</button>
+      <audio id="preview" controls preload="none"></audio>
+      <div class="status" id="tts-status"></div>
+    </section>
+
+    <!-- ==================== 唤醒与形象 ==================== -->
+    <section class="card page hidden" data-module="wake">
+      <h2>唤醒与形象 <span class="badge" id="wake-badge">—</span></h2>
+      <p class="hint">说一句提示词就能开口，不用按空格。改完保存即刻生效，无需重启。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="WAKE_ENABLED">
+          <span>常开唤醒</span>
+        </label>
+        <div class="note" style="margin-top:10px">关掉后只能按住空格，或点一下桌面上的形象。开启时会常驻占用少量显卡（每说完一句转写一次）。</div>
+      </div>
+
+      <div class="field">
+        <label for="WAKE_PHRASE">唤醒提示词</label>
+        <input type="text" id="WAKE_PHRASE" placeholder="小蓝小蓝" maxlength="12">
+        <div class="note" id="wake-tip">建议 3~6 个字；判定按<strong>同音</strong>来，听成「小兰」「小男」「晓岚」也算，但两个字必须读音全对。叠词（小蓝小蓝）比单词更不容易被日常聊天误触发。</div>
+      </div>
+
+      <div class="field">
+        <label>灵敏度（越大越容易听出你在说话）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SENSITIVITY" min="0" max="1" step="0.05">
+          <span class="val" id="WAKE_SENSITIVITY-v">0.60</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>断句静音（说完后停顿多久算一句）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SILENCE" min="0.3" max="3" step="0.1">
+          <span class="val" id="WAKE_SILENCE-v">0.8s</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>连续对话（唤醒后多久之内可以直接接着说）</label>
+        <div class="inline">
+          <input type="range" id="WAKE_SESSION_SECONDS" min="0" max="120" step="5">
+          <span class="val" id="WAKE_SESSION_SECONDS-v">20s</span>
+        </div>
+        <div class="note">这段时间里不用再喊提示词，说完一句它会继续听下一句；一直没人说话就转回休眠，再喊提示词才重新激活。拖到 0 就是每句都要喊。</div>
+      </div>
+
+      <div class="field">
+        <label for="wake-test-text">验证提示词：把一句话拿去比对</label>
+        <div class="row">
+          <input type="text" id="wake-test-text" placeholder="小兰小兰，现在几点了">
+          <button class="act shrink" id="btn-wake-test">比对</button>
+        </div>
+        <div class="status" id="wake-test-status"></div>
+      </div>
+
+      <div class="note" id="wake-live">监听状态：读取中…</div>
+      <div class="note">桌面形象是独立进程：双击 <code>start.vbs</code> 一起启动；右键点它可以打开本页或退出程序。</div>
+    </section>
+
+    <!-- ==================== 语音打断 ==================== -->
+    <section class="card page hidden" data-module="barge">
+      <h2>语音打断 <span class="badge" id="barge-badge">—</span></h2>
+      <p class="hint">它说话的时候你直接开口，播报立刻停，接着听你说下一句 —— 不用等它把话说完。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="BARGE_IN_ENABLED">
+          <span>允许语音打断</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          判定方式：拿<strong>它自己的播报声</strong>当基线，麦克风电平超过这个基线若干倍、
+          并持续一段时间，才认定是你在说话。所以外放再响也不会自己打断自己；
+          很难打断就调高灵敏度，老是被误打断就调低。
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>灵敏度（电平要超过回声的倍数）</label>
+          <div class="inline">
+            <input type="range" id="BARGE_IN_SENSITIVITY" min="0.1" max="1" step="0.05">
+            <span class="val" id="BARGE_IN_SENSITIVITY-v">—</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>持续多久才算你在说话</label>
+          <div class="inline">
+            <input type="range" id="BARGE_IN_MIN_MS" min="100" max="1200" step="50">
+            <span class="val" id="BARGE_IN_MIN_MS-v">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>实时电平（对着麦克风说话，看它有没有越过橙线）</label>
+        <div class="meter">
+          <div class="fill" id="barge-fill"></div>
+          <div class="mark" id="barge-mark"></div>
+        </div>
+        <div class="note" id="barge-live">—</div>
+      </div>
+    </section>
+
+    <!-- ==================== 联网搜索 ==================== -->
+    <section class="card page hidden" data-module="search">
+      <h2>联网搜索 <span class="badge" id="search-badge">—</span></h2>
+      <p class="hint">问天气、新闻、股价这类「此刻才成立」的事，先去网上查一段再回答，而不是让本地模型硬编。</p>
+
+      <div class="field">
+        <label>什么时候查</label>
+        <div class="seg" data-target="SEARCH_MODE">
+          <button type="button" data-value="off">关闭</button>
+          <button type="button" data-value="auto">按问题判断</button>
+          <button type="button" data-value="always">每次都查</button>
+        </div>
+        <div class="note" style="margin-top:10px">
+          按问题判断：出现「今天/最新/股价/天气/新闻」这类时效词，或者「帮我查一下」这种明确要求时才查，
+          闲聊不查。「现在几点」「今天周几」由本地时间直接回答，不会浪费一次搜索。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>搜索服务</label>
+        <div class="seg" data-target="SEARCH_BACKEND">
+          <button type="button" data-value="bing">必应</button>
+          <button type="button" data-value="tavily">Tavily</button>
+          <button type="button" data-value="bocha">博查</button>
+          <button type="button" data-value="searx">SearXNG</button>
+        </div>
+        <div class="note" style="margin-top:10px">必应免 Key、国内可直连，够用就别换。Tavily 和博查的摘要更贴合大模型，但都要自己申请 Key。</div>
+      </div>
+
+      <div data-group="search-key">
+        <div class="field">
+          <label for="SEARCH_KEY">API Key</label>
+          <input type="password" id="SEARCH_KEY" placeholder="粘贴服务商给的 Key" autocomplete="off">
+          <div class="note" id="SEARCH_KEY-note">保存后只显示末四位；留空表示沿用原来的。</div>
+        </div>
+      </div>
+
+      <div data-group="search-searx">
+        <div class="field">
+          <label for="SEARCH_ENDPOINT">SearXNG 实例地址</label>
+          <input type="text" id="SEARCH_ENDPOINT" placeholder="http://127.0.0.1:8888">
+          <div class="note">实例要允许 JSON 输出（settings.yml 里 <code>search.formats</code> 含 <code>json</code>）。</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>结果条数（喂给模型几条网页摘要）</label>
+        <div class="inline">
+          <input type="range" id="SEARCH_RESULTS" min="1" max="10" step="1">
+          <span class="val" id="SEARCH_RESULTS-v">5</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>搜索超时</label>
+        <div class="inline">
+          <input type="range" id="SEARCH_TIMEOUT" min="2" max="30" step="1">
+          <span class="val" id="SEARCH_TIMEOUT-v">6s</span>
+        </div>
+        <div class="note">超时就当没查到，照常回答，不会卡住整轮对话。</div>
+      </div>
+
+      <div class="field">
+        <label for="search-test-q">试搜一句</label>
+        <div class="row">
+          <input type="text" id="search-test-q" placeholder="今天有什么新闻">
+          <button class="act shrink" id="btn-search-test">搜一下</button>
+        </div>
+        <div class="status" id="search-test-status"></div>
+        <div class="note" id="search-test-result"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 语音打开应用 ==================== -->
+    <section class="card page hidden" data-module="apps">
+      <h2>语音打开应用 <span class="badge" id="apps-badge">—</span></h2>
+      <p class="hint">说「打开微信」「启动计算器」，查一下本机装了什么就直接拉起，不经过大模型，所以是瞬间反应。</p>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="APPS_ENABLED">
+          <span>允许语音打开应用</span>
+        </label>
+        <div class="note" style="margin-top:10px">
+          应用名按<strong>同音</strong>匹配，听成「威信」「维信」也能认出是微信；
+          找不到的名字不会硬猜，会当成普通聊天交给大模型。只会打开开始菜单里有的程序，不会执行任意命令。
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="APPS_ALIASES">中英文对不上？在这里补</label>
+        <textarea id="APPS_ALIASES" rows="3"
+          placeholder="谷歌浏览器、谷歌 = chrome&#10;达梦 = dm"></textarea>
+        <div class="sub">软件装的是英文名、你说的是中文名时用。左边是想说的叫法（多个用顿号隔开），
+          右边是软件名里出现的词，保存后立刻生效。内置的常见软件（Chrome、Edge、VS Code、WPS、Steam 等）已经认得，不用重复写。</div>
+      </div>
+
+      <div class="field">
+        <label for="apps-test-name">试一下（会真的打开）</label>
+        <div class="row">
+          <input type="text" id="apps-test-name" placeholder="打开谷歌浏览器">
+          <button class="act shrink" id="btn-apps-test">打开</button>
+        </div>
+        <div class="status" id="apps-test-status"></div>
+      </div>
+
+      <div class="note" id="apps-count">正在读取应用清单…</div>
+    </section>
+
+    <!-- ==================== 交互与页面 ==================== -->
+    <section class="card page hidden" data-module="misc">
+      <h2>交互与页面</h2>
+      <p class="hint">按住说话的时长判定，以及配置页自身的设置。</p>
+      <div class="row">
+        <div class="field">
+          <label for="MIN_RECORD_SECONDS">最短录音（秒）</label>
+          <input type="text" id="MIN_RECORD_SECONDS" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="MAX_RECORD_SECONDS">最长录音（秒）</label>
+          <input type="text" id="MAX_RECORD_SECONDS" inputmode="numeric">
+        </div>
+      </div>
+      <div class="field">
+        <label for="WEB_PORT">配置页端口（改完需重启）</label>
+        <input type="text" id="WEB_PORT" inputmode="numeric">
+      </div>
+      <div class="note" id="env-note"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="bar">
+  <div class="bar-in">
+    <span class="msg" id="foot-msg">就绪</span>
+    <button class="act" id="btn-reload">重新读取</button>
+    <button class="act primary" id="btn-save">保存并应用</button>
+  </div>
+</footer>
+
+<script>
+const HEADERS = { "Content-Type": "application/json", "X-Voice-Assistant": "1" };
+
+// 服务不再写死预设：用户自己「存为服务」，档案存在 LLM_SERVICES 里。
+// 下面只是填写提示，点了也不会自动套用。
+const SERVICE_HINTS = [
+  "DeepSeek · https://api.deepseek.com/v1 · deepseek-chat",
+  "硅基流动 · https://api.siliconflow.cn/v1 · Qwen/Qwen2.5-7B-Instruct",
+  "阿里百炼 · https://dashscope.aliyuncs.com/compatible-mode/v1 · qwen-plus",
+  "智谱 GLM · https://open.bigmodel.cn/api/paas/v4 · glm-4-flash",
+];
+
+// 存档里的服务分两类：本地 Ollama（只看地址+模型）和任意 OpenAI 兼容接口
+// （地址+模型+Key）。两类的字段不同，所以档案里带 provider。
+let SERVICES = [];
+let OLLAMA_MODELS = [];   // 最近一次拿到的本地模型列表，切服务时用它填下拉
+
+function svcKind(s) {
+  return (s && s.provider === "ollama") ? "ollama" : "openai";
+}
+
+function servicesFromConfig(raw) {
+  try {
+    const data = JSON.parse(raw || "[]");
+    return Array.isArray(data) ? data.filter((s) => s && s.name) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function renderServices(selectName) {
+  const sel = $("preset");
+  const cur = selectName !== undefined ? selectName : sel.value;
+  sel.innerHTML = '<option value="">（手动填写，不存为服务）</option>' +
+    SERVICES.map((s, i) =>
+      '<option value="' + i + '">' + escapeHtml(s.name) +
+      "（" + (svcKind(s) === "ollama" ? "本地" : "网络") +
+      (s.model ? " · " + escapeHtml(s.model) : "") + "）</option>").join("");
+  sel.value = SERVICES.some((s, i) => String(i) === String(cur)) ? cur : "";
+}
+
+// 切换分段控件（本地 / 网络），切完要让分组跟着显示/隐藏
+function setSeg(target, value) {
+  const seg = document.querySelector('.seg[data-target="' + target + '"]');
+  if (!seg) return;
+  seg.querySelectorAll("button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.value === value));
+  });
+  paintGroups();
+}
+
+const LOCALE_NAME = {
+  "zh-CN": "普通话", "zh-CN-liaoning": "东北话", "zh-CN-shaanxi": "陕西话",
+  "zh-HK": "粤语（中国香港）", "zh-TW": "国语（中国台湾）",
+};
+
+// 模块定义：标题、副标题决定切换时的页头文案
+const MODULES = {
+  overview: { title: "总览", sub: "一眼看全当前配置和运行状态。" },
+  persona: { title: "性格预设", sub: "决定「它是个什么样的人」：语气、称呼、脾气。" },
+  llm: { title: "大模型服务", sub: "决定「怎么回答」：本地 Ollama，或任意 OpenAI 兼容接口。" },
+  mcp: { title: "MCP 工具", sub: "给模型接上外部能力，什么时候调用由它自己判断。" },
+  asr: { title: "语音识别", sub: "决定「怎么听懂你」：本地 whisper，或网络识别接口。" },
+  tts: { title: "语音合成", sub: "决定「用什么声音说」：在线音质自然，离线断网可用。" },
+  wake: { title: "唤醒与形象", sub: "说提示词就能开口；唤醒后还能连续追问。" },
+  barge: { title: "语音打断", sub: "它说话时你一开口就停，不用等它把话说完。" },
+  search: { title: "联网搜索", sub: "时效性问题先上网查一段，再让模型组织成口语。" },
+  apps: { title: "语音打开应用", sub: "查表直接拉起，不经过大模型，所以是瞬间反应。" },
+  misc: { title: "交互与页面", sub: "录音时长判定与配置页自身设置。" },
+};
+
+let STATE = null;
+let CURRENT = "overview";
+const DIRTY = new Set();
+
+const $ = (id) => document.getElementById(id);
+const segs = () => Array.from(document.querySelectorAll(".seg[data-target]"));
+const groups = () => Array.from(document.querySelectorAll("[data-group]"));
+
+// ---------------- 模块切换 ----------------
+function showModule(name, opts) {
+  if (!MODULES[name]) name = "overview";
+  CURRENT = name;
+  document.querySelectorAll("section.page").forEach((el) => {
+    el.classList.toggle("hidden", el.dataset.module !== name);
+  });
+  document.querySelectorAll("#nav button.nav").forEach((b) => {
+    if (b.dataset.module === name) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  });
+  $("page-title").textContent = MODULES[name].title;
+  $("page-sub").textContent = MODULES[name].sub;
+  if (!opts || opts.scroll !== false) window.scrollTo(0, 0);
+  if (!opts || opts.hash !== false) {
+    if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
+  }
+}
+
+document.querySelectorAll("#nav button.nav").forEach((btn) => {
+  btn.addEventListener("click", () => showModule(btn.dataset.module));
+});
+
+// ---------------- 未保存标记 ----------------
+function markDirty(module) {
+  if (!module || module === "overview") return;
+  DIRTY.add(module);
+  const btn = document.querySelector('#nav button.nav[data-module="' + module + '"]');
+  if (btn) btn.classList.add("dirty");
+}
+
+function clearDirty() {
+  DIRTY.clear();
+  document.querySelectorAll("#nav button.nav").forEach((b) => b.classList.remove("dirty"));
+}
+
+["input", "change"].forEach((type) => {
+  document.addEventListener(type, (ev) => {
+    const sec = ev.target.closest && ev.target.closest("section.page[data-module]");
+    if (sec) markDirty(sec.dataset.module);
+  }, true);
+});
+
+// ---------------- 基础工具 ----------------
+function segValue(key) {
+  const seg = document.querySelector('.seg[data-target="' + key + '"]');
+  if (!seg) return null;
+  const on = seg.querySelector('button[aria-pressed="true"]');
+  return on ? on.dataset.value : null;
+}
+
+// 根据当前选择显示/隐藏对应字段组
+function paintGroups() {
+  const map = {
+    "llm-ollama": segValue("LLM_PROVIDER") === "ollama",
+    "llm-openai": segValue("LLM_PROVIDER") === "openai",
+    "tts-edge": segValue("TTS_ENGINE") === "edge",
+    "tts-sapi": segValue("TTS_ENGINE") === "sapi",
+    "tts-custom": segValue("TTS_ENGINE") === "custom",
+    "asr-local": segValue("ASR_PROVIDER") === "local",
+    "asr-openai": segValue("ASR_PROVIDER") === "openai",
+    "search-key": ["tavily", "bocha"].includes(segValue("SEARCH_BACKEND")),
+    "search-searx": segValue("SEARCH_BACKEND") === "searx",
+  };
+  groups().forEach((g) => {
+    const show = map[g.dataset.group];
+    if (show === undefined) return;
+    g.classList.toggle("hidden", !show);
+  });
+}
+
+function status(el, text, kind) {
+  el.textContent = text || "";
+  // 不要整体覆盖 className：有些元素身上的 "mcp-res" 之类是身份标记，
+  // 被抹掉之后下一次 querySelector 就找不到它了（曾经的真实 bug）
+  el.classList.remove("ok", "bad");
+  el.classList.add("status");
+  if (kind) el.classList.add(kind);
+}
+
+function foot(text, kind) {
+  const el = $("foot-msg");
+  el.textContent = text;
+  // 同样只改状态类，不动 className（以后这元素加别的类也不会被抹掉）
+  el.classList.remove("ok", "bad", "warn");
+  el.classList.add("msg");
+  if (kind) el.classList.add(kind);
+}
+
+function escapeHtml(text) {
+  return String(text == null ? "" : text).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+}
+
+function fillVoices(list, current) {
+  const sel = $("TTS_VOICE");
+  sel.innerHTML = "";
+  if (!list.length) {
+    sel.innerHTML = '<option value="">（拉取失败，请检查网络后点「重新读取」）</option>';
+    return;
+  }
+  const byLocale = {};
+  list.forEach((v) => {
+    const key = v.locale || "其他";
+    (byLocale[key] = byLocale[key] || []).push(v);
+  });
+  Object.keys(byLocale).sort().forEach((loc) => {
+    const og = document.createElement("optgroup");
+    og.label = LOCALE_NAME[loc] || loc;
+    byLocale[loc].forEach((v) => {
+      const o = document.createElement("option");
+      o.value = v.name;
+      o.textContent = v.name.replace("Neural", "") + " · " + v.gender;
+      if (v.name === current) o.selected = true;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+}
+
+function fillSapiVoices(list, current) {
+  const sel = $("SAPI_VOICE");
+  sel.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = "系统默认";
+  sel.appendChild(auto);
+  list.forEach((v) => {
+    const o = document.createElement("option");
+    o.value = v.name;
+    o.textContent = v.name;
+    if (v.name === current) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function fillOllamaModels(list, current) {
+  const sel = $("LLM_MODEL");
+  sel.innerHTML = "";
+  if (!list.length) {
+    // 列表可能是别的服务（比如刚切到本地、缓存里还是网络接口的模型），
+    // 这时候也要把当前选中的模型留住，否则一切换就把配置冲成空
+    if (current) {
+      const o = document.createElement("option");
+      o.value = current;
+      o.textContent = current + "（点「刷新模型」确认）";
+      o.selected = true;
+      sel.appendChild(o);
+    } else {
+      sel.innerHTML = '<option value="">（没有可用模型）</option>';
+    }
+    return;
+  }
+  list.forEach((m) => {
+    const o = document.createElement("option");
+    o.value = m;
+    o.textContent = m;
+    if (m === current) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (current && !list.includes(current)) {
+    const o = document.createElement("option");
+    o.value = current;
+    o.textContent = current + "（未安装）";
+    o.selected = true;
+    sel.insertBefore(o, sel.firstChild);
+  }
+}
+
+// ---------------- 总览 ----------------
+function renderOverview(c, r) {
+  const mcp = r.mcp || {};
+  const asr = r.asr || {};
+  const gpu = r.gpu || {};
+  const llmOk = r.llm && r.llm.ok;
+  const tiles = [
+    {
+      module: "persona", label: "性格", dot: "ok",
+      value: (PERSONA.list.find((p) => p.id === c.PERSONA_PRESET) || {}).name || "小蓝",
+      note: c.PERSONA_EXTRA ? "额外要求：" + String(c.PERSONA_EXTRA).slice(0, 24) : "选中后点保存即刻生效",
+    },
+    {
+      module: "llm", label: "大模型", dot: llmOk ? "ok" : "bad",
+      value: c.LLM_PROVIDER === "openai" ? "网络 · " + c.OPENAI_MODEL : "本地 · " + c.LLM_MODEL,
+      note: llmOk ? "已连接" : ((r.llm && r.llm.detail) || "未连接"),
+    },
+    {
+      module: "mcp", label: "MCP 工具", dot: !c.MCP_ENABLED ? "" : (mcp.connected ? "ok" : "warn"),
+      value: !c.MCP_ENABLED ? "已关闭"
+        : (!mcp.servers ? "还没有配置服务器"
+          : (mcp.tools ? mcp.tools + " 个工具 / " + mcp.connected + " 个服务器" : "没有可用工具")),
+      note: "最多调用 " + c.MCP_MAX_ROUNDS + " 轮，单次超时 " + c.MCP_TIMEOUT + "s",
+    },
+    {
+      module: "asr", label: "语音识别", dot: asr.device && asr.device !== "未加载" ? "ok" : "",
+      value: c.ASR_PROVIDER === "openai" ? "网络 · " + c.ASR_REMOTE_MODEL : "本地 · whisper " + c.WHISPER_MODEL,
+      note: asr.device ? asr.device + " / " + asr.compute_type : "未加载",
+    },
+    {
+      module: "tts", label: "语音合成", dot: "",
+      value: c.TTS_ENGINE === "sapi" ? "离线系统语音" : "在线 · " + String(c.TTS_VOICE || "").replace("Neural", ""),
+      note: "语速 " + c.TTS_RATE + " · 音调 " + c.TTS_PITCH,
+    },
+    {
+      module: "wake", label: "唤醒", dot: c.WAKE_ENABLED ? "ok" : "",
+      value: c.WAKE_ENABLED ? "「" + c.WAKE_PHRASE + "」" : "已关闭",
+      note: c.WAKE_ENABLED ? "唤醒后连续对话 " + (c.WAKE_SESSION_SECONDS || 0) + " 秒" : "只支持按住空格",
+    },
+    {
+      module: "barge", label: "语音打断", dot: c.BARGE_IN_ENABLED ? "ok" : "",
+      value: c.BARGE_IN_ENABLED ? "已开启" : "已关闭",
+      note: "电平超过回声 " + bargeRatio(c.BARGE_IN_SENSITIVITY).toFixed(1) + " 倍才算你开口",
+    },
+    {
+      module: "search", label: "联网搜索", dot: c.SEARCH_MODE === "off" ? "" : "ok",
+      value: c.SEARCH_MODE === "off" ? "已关闭" : (c.SEARCH_MODE === "always" ? "每次都查" : "按问题判断"),
+      note: "服务 " + String(c.SEARCH_BACKEND || "").toUpperCase() + " · 取 " + c.SEARCH_RESULTS + " 条",
+    },
+    {
+      module: "apps", label: "语音打开应用", dot: c.APPS_ENABLED ? "ok" : "",
+      value: c.APPS_ENABLED ? "已开启" : "已关闭",
+      note: "同音匹配开始菜单里的程序",
+    },
+    {
+      module: "misc", label: "显存 / 页面", dot: "",
+      value: gpu.total ? gpu.used + " / " + gpu.total + " MiB" : "读不到显卡",
+      note: "进程 PID " + r.pid + " · 端口 " + r.port,
+    },
+  ];
+  $("ov-tiles").innerHTML = tiles.map((t) =>
+    '<div class="tile" data-goto="' + t.module + '">' +
+      '<div class="t-label"><span class="dot ' + (t.dot || "") + '"></span>' + escapeHtml(t.label) + "</div>" +
+      '<div class="t-value">' + escapeHtml(t.value) + "</div>" +
+      '<div class="t-note">' + escapeHtml(t.note) + "</div>" +
+    "</div>"
+  ).join("");
+}
+
+document.addEventListener("click", (ev) => {
+  const tile = ev.target.closest(".tile[data-goto]");
+  if (!tile) return;
+  showModule(tile.dataset.goto);
+});
+
+// ---------------- 主渲染 ----------------
+function renderState(data) {
+  STATE = data;
+  const c = data.config;
+  const r = data.runtime;
+
+  ["OLLAMA_HOST", "OPENAI_BASE", "OPENAI_MODEL", "ASR_REMOTE_MODEL",
+   "TTS_RATE", "TTS_PITCH", "TTS_VOLUME", "LLM_NUM_CTX", "MAX_HISTORY_TURNS",
+   "MIN_RECORD_SECONDS", "MAX_RECORD_SECONDS", "WEB_PORT", "WAKE_PHRASE"].forEach((k) => {
+    const el = $(k);
+    if (el) el.value = c[k] ?? "";
+  });
+
+  // 密钥不回填到输入框（避免把掩码当真实值再存回去），只提示是否已保存
+  const keyInput = $("OPENAI_KEY");
+  keyInput.value = "";
+  delete keyInput.dataset.cleared;
+  keyInput.placeholder = c.OPENAI_KEY__set
+    ? "已保存 " + c.OPENAI_KEY + "，留空表示不修改"
+    : "sk-...（保存后只显示末四位）";
+  $("ASR_BEAM_SIZE").value = String(c.ASR_BEAM_SIZE ?? 1);
+  $("WHISPER_MODEL").value = c.WHISPER_MODEL ?? "auto";
+  $("ASR_NORMALIZE").checked = c.ASR_NORMALIZE !== false;
+  $("ASR_PROMPT_MODE").value = c.ASR_PROMPT_MODE ?? "auto";
+  $("ASR_HOTWORDS").value = c.ASR_HOTWORDS ?? "";
+  $("APPS_ALIASES").value = c.APPS_ALIASES ?? "";
+
+  $("LLM_TEMPERATURE").value = c.LLM_TEMPERATURE ?? 0.7;
+  $("LLM_TEMPERATURE-v").textContent = Number(c.LLM_TEMPERATURE ?? 0.7).toFixed(1);
+
+  // MCP
+  $("MCP_ENABLED").checked = !!c.MCP_ENABLED;
+  const rounds = Number(c.MCP_MAX_ROUNDS ?? 3);
+  $("MCP_MAX_ROUNDS").value = rounds;
+  $("MCP_MAX_ROUNDS-v").textContent = rounds === 0 ? "只判定" : String(rounds);
+  const mto = Number(c.MCP_TIMEOUT ?? 20);
+  $("MCP_TIMEOUT").value = mto;
+  $("MCP_TIMEOUT-v").textContent = mto + "s";
+  const mtools = Number(c.MCP_MAX_TOOLS ?? 24);
+  $("MCP_MAX_TOOLS").value = mtools;
+  $("MCP_MAX_TOOLS-v").textContent = String(mtools);
+
+  // 性格：保存后重新读取时把选择、自定义人设一起刷新回来
+  PERSONA.id = c.PERSONA_PRESET || "default";
+  $("PERSONA_EXTRA").value = c.PERSONA_EXTRA || "";
+  $("PERSONA_PROMPT").value = c.PERSONA_PROMPT || "";
+  $("PERSONA_VOICE").checked = !!c.PERSONA_VOICE;
+  if (PERSONA.list.length) renderPersonaGrid();
+
+  // 唤醒
+  $("WAKE_ENABLED").checked = !!c.WAKE_ENABLED;
+  const sens = Number(c.WAKE_SENSITIVITY ?? 0.6);
+  $("WAKE_SENSITIVITY").value = sens;
+  $("WAKE_SENSITIVITY-v").textContent = sens.toFixed(2);
+  const silent = Number(c.WAKE_SILENCE ?? 0.8);
+  $("WAKE_SILENCE").value = silent;
+  $("WAKE_SILENCE-v").textContent = silent.toFixed(1) + "s";
+  const sess = Number(c.WAKE_SESSION_SECONDS ?? 20);
+  $("WAKE_SESSION_SECONDS").value = sess;
+  $("WAKE_SESSION_SECONDS-v").textContent = sess > 0 ? sess + "s" : "关";
+
+  // 语音打断
+  $("BARGE_IN_ENABLED").checked = !!c.BARGE_IN_ENABLED;
+  const bsens = Number(c.BARGE_IN_SENSITIVITY ?? 0.6);
+  $("BARGE_IN_SENSITIVITY").value = bsens;
+  const bms = Number(c.BARGE_IN_MIN_MS ?? 350);
+  $("BARGE_IN_MIN_MS").value = bms;
+  paintBarge();
+  $("barge-badge").textContent = c.BARGE_IN_ENABLED ? "开启" : "关闭";
+
+  // 联网搜索
+  const hits = Number(c.SEARCH_RESULTS ?? 5);
+  $("SEARCH_RESULTS").value = hits;
+  $("SEARCH_RESULTS-v").textContent = String(hits);
+  const stimeout = Number(c.SEARCH_TIMEOUT ?? 6);
+  $("SEARCH_TIMEOUT").value = stimeout;
+  $("SEARCH_TIMEOUT-v").textContent = stimeout + "s";
+  $("SEARCH_ENDPOINT").value = c.SEARCH_ENDPOINT ?? "";
+  const searchKey = $("SEARCH_KEY");
+  searchKey.value = "";
+  delete searchKey.dataset.cleared;
+  searchKey.placeholder = c.SEARCH_KEY__set
+    ? "已保存 " + c.SEARCH_KEY + "，留空表示不修改"
+    : "必应不需要 Key；Tavily / 博查填这里";
+  $("search-badge").textContent =
+    c.SEARCH_MODE === "off" ? "关闭" : c.SEARCH_MODE === "always" ? "每次" : "自动";
+
+  // 语音打开应用
+  $("APPS_ENABLED").checked = !!c.APPS_ENABLED;
+  $("apps-badge").textContent = c.APPS_ENABLED ? "开启" : "关闭";
+
+  // 分段控件先按配置值初始化，再绘制
+  segs().forEach((seg) => {
+    const key = seg.dataset.target;
+    seg.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.value === c[key]));
+    });
+  });
+  paintGroups();
+
+  fillVoices(data.voices || [], c.TTS_VOICE);
+  fillSapiVoices(data.sapi_voices || [], c.SAPI_VOICE);
+  $("TTS_FALLBACK_SAPI").checked = c.TTS_FALLBACK_SAPI !== false;
+  $("TTS_CUSTOM_BASE").value = c.TTS_CUSTOM_BASE ?? "";
+  $("TTS_CUSTOM_VOICE").value = c.TTS_CUSTOM_VOICE ?? "";
+  $("TTS_CUSTOM_MODEL").value = c.TTS_CUSTOM_MODEL ?? "";
+  $("TTS_CUSTOM_FORMAT").value = c.TTS_CUSTOM_FORMAT === "mp3" ? "mp3" : "wav";
+  const ttsKey = $("TTS_CUSTOM_KEY");
+  ttsKey.value = "";
+  delete ttsKey.dataset.cleared;
+  ttsKey.placeholder = c.TTS_CUSTOM_KEY__set
+    ? "已保存 " + c.TTS_CUSTOM_KEY + "，留空表示不修改"
+    : "留空表示不鉴权";
+  OLLAMA_MODELS = (r.llm && r.llm.models) || [];
+  fillOllamaModels(OLLAMA_MODELS, c.LLM_MODEL);
+
+  // 我的服务：从配置里的档案恢复，再按当前地址对齐选中项
+  SERVICES = servicesFromConfig(c.LLM_SERVICES);
+  renderServices("");
+  syncPreset();
+
+  // 顶部状态
+  const chips = [];
+  const llmOk = r.llm && r.llm.ok;
+  chips.push('<span class="chip"><span class="dot ' + (llmOk ? "ok" : "bad") + '"></span>' +
+    (c.LLM_PROVIDER === "openai" ? "网络模型" : "本地模型") + (llmOk ? " 已连接" : " 未连接") + "</span>");
+  if (r.asr) {
+    chips.push('<span class="chip"><span class="dot ok"></span>识别 ' + r.asr.device + " / " + r.asr.compute_type + "</span>");
+  }
+  if (r.mcp && r.mcp.enabled) {
+    const m = r.mcp;
+    const good = m.connected > 0;
+    chips.push('<span class="chip"><span class="dot ' + (good ? "ok" : "warn") + '"></span>MCP ' +
+      (m.tools ? m.tools + " 工具" : "无工具") + "</span>");
+  }
+  if (r.wake) {
+    const on = !!r.wake.enabled;
+    const label = !on ? "已关闭" : (r.status === "sleeping" ? "休眠中" : "已激活");
+    chips.push('<span class="chip"><span class="dot ' + (on ? "ok" : "") + '"></span>唤醒 ' + label + "</span>");
+  }
+  if (r.gpu && r.gpu.total) {
+    chips.push('<span class="chip">显存 ' + r.gpu.used + " / " + r.gpu.total + " MiB</span>");
+  }
+  chips.push('<span class="chip">PID ' + r.pid + "</span>");
+  $("chips").innerHTML = chips.join("");
+
+  $("llm-badge").textContent = c.LLM_PROVIDER === "openai" ? "网络" : "本地";
+  $("tts-badge").textContent = c.TTS_ENGINE === "sapi" ? "离线" : "在线";
+  const _asr = r.asr || {};
+  $("asr-badge").textContent = c.ASR_PROVIDER === "openai"
+    ? "网络"
+    : (((_asr.model_size && _asr.model_size !== "-") ? _asr.model_size : "") + " · " + (_asr.device || "本地"));
+  if ((_asr.prompt_words || 0) > 0) $("asr-prompt-count").textContent = "当前提示词里还有本机 " + _asr.prompt_words + " 个常见词。";
+  $("wake-badge").textContent = c.WAKE_ENABLED ? "开" : "关";
+  if (r.mcp) {
+    const m = r.mcp;
+    $("mcp-badge").textContent = !c.MCP_ENABLED ? "关闭"
+      : (m.tools ? m.tools + " 个工具"
+        : (m.servers === 0 ? "未配置" : (m.connected ? "无工具" : "未连接")));
+  }
+
+  renderOverview(c, r);
+  renderLive(r);
+  $("env-note").innerHTML = "配置文件：<code>" + r.settings_file + "</code>" + (r.settings_exists ? "" : "（保存后生成）");
+  $("side-foot").innerHTML = "端口 " + r.port + "<br>" + (r.settings_exists ? "settings.json 已生成" : "settings.json 未生成");
+  status($("llm-status"), (r.llm && r.llm.detail) || "", llmOk ? "ok" : "bad");
+}
+
+const STATUS_NAME = { sleeping: "休眠中", idle: "空闲", listening: "录音中", thinking: "思考中", speaking: "播报中" };
+const WAKE_NAME = { off: "未监听", listening: "监听中", triggered: "刚被唤醒", error: "出错" };
+
+function renderLive(r) {
+  const wake = r.wake || {};
+  const boot = r.boot || {};
+  const banner = $("boot-banner");
+  if (boot.stage) {
+    banner.classList.remove("hidden");
+    banner.textContent = "启动中 " + (boot.step || 0) + "/" + (boot.total || 0)
+      + " · " + boot.stage + (boot.detail ? "（" + boot.detail + "）" : "");
+  } else {
+    banner.classList.add("hidden");
+  }
+  const bits = ["助手 " + (STATUS_NAME[r.status] || "未知")];
+  if (wake.state !== undefined) bits.push("唤醒 " + (WAKE_NAME[wake.state] || wake.state));
+  if (wake.phrase) bits.push("提示词「" + wake.phrase + "」");
+  if (wake.match_mode) bits.push("匹配 " + wake.match_mode);
+  if (r.status === "sleeping") bits.push("等提示词激活");
+  else if (r.session > 0) bits.push("会话保持 剩余 " + r.session + "s");
+  if (wake.hits) bits.push("已唤醒 " + wake.hits + " 次");
+  if (wake.last_heard) bits.push("最近听到「" + wake.last_heard + "」");
+  if (wake.peak) {
+    const low = wake.min_peak && wake.peak < wake.min_peak;
+    bits.push("峰值 " + wake.peak + (wake.min_peak ? "（门槛 " + wake.min_peak + (low ? "，太轻被跳过" : "") + "）" : ""));
+  }
+  if (wake.threshold) bits.push("当前阈值 " + wake.threshold);
+  if (wake.detail) bits.push(wake.detail);
+  if (wake.error) bits.push("错误：" + wake.error);
+  $("wake-live").textContent = "监听状态：" + bits.join(" · ");
+}
+
+async function pollLive() {
+  try {
+    const data = await fetch("/api/live", { headers: HEADERS }).then((r) => r.json());
+    const r = data.runtime || {};
+    renderLive(r);
+    if (STATE && STATE.runtime) STATE.runtime.status = r.status;
+  } catch (err) {
+    $("wake-live").textContent = "监听状态：连不上助手进程（可能已经退出）";
+  }
+}
+
+// ---------------- 语音打断 ----------------
+const BARGE_SCALE = 0.12;   // 电平条的满量程，正好覆盖「正常说话」的量级
+
+function bargeRatio(s) {
+  return 4.0 - 2.6 * Math.max(0, Math.min(1, Number(s) || 0));
+}
+
+function paintBarge() {
+  const s = Number($("BARGE_IN_SENSITIVITY").value || 0.6);
+  const ms = Number($("BARGE_IN_MIN_MS").value || 350);
+  $("BARGE_IN_SENSITIVITY-v").textContent = bargeRatio(s).toFixed(1) + "×";
+  $("BARGE_IN_MIN_MS-v").textContent = ms + "ms";
+}
+
+$("BARGE_IN_SENSITIVITY").addEventListener("input", paintBarge);
+$("BARGE_IN_MIN_MS").addEventListener("input", paintBarge);
+
+async function pollBarge() {
+  if (CURRENT !== "barge") return;   // 只在看这一页时才轮询
+  try {
+    const b = await fetch("/api/barge", { headers: HEADERS }).then((r) => r.json());
+    if (!b || b.enabled === undefined) return;
+    if (b.need === undefined) {
+      // 仅配置模式没有助手进程，没有麦克风可看
+      $("barge-fill").style.width = "0%";
+      $("barge-mark").style.left = "0%";
+      $("barge-live").textContent = "实时电平要等助手进程跑起来才有（仅配置模式没有麦克风）";
+      return;
+    }
+    const level = Number(b.level || 0);
+    const need = Number(b.need || 0);
+    $("barge-fill").style.width = Math.min(100, (level / BARGE_SCALE) * 100) + "%";
+    $("barge-mark").style.left = Math.min(100, (need / BARGE_SCALE) * 100) + "%";
+    const bits = ["电平 " + level.toFixed(4), "触发线 " + need.toFixed(4)];
+    if (b.speaking) bits.push("正在播报");
+    if (!b.enabled) bits.push("打断当前是关的");
+    if (b.hits) bits.push("已打断 " + b.hits + " 次");
+    if (b.last_ms) bits.push("上次判定用了 " + b.last_ms + "ms");
+    $("barge-live").textContent = bits.join(" · ");
+  } catch (err) {
+    $("barge-live").textContent = "读不到助手进程的状态（可能已经退出）";
+  }
+}
+
+setInterval(pollBarge, 500);
+
+async function load() {
+  foot("读取配置…");
+  try {
+    const res = await fetch("/api/state", { headers: HEADERS });
+    const data = await res.json();
+    renderState(data);
+    clearDirty();
+    foot("就绪", "ok");
+  } catch (err) {
+    foot("读取失败：" + err, "bad");
+  }
+}
+
+// ---------------- 分段控件 ----------------
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".seg[data-target] button");
+  if (!btn) return;
+  const seg = btn.closest(".seg");
+  seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+  paintGroups();
+  if (seg.dataset.target === "LLM_PROVIDER") syncPreset();
+});
+
+$("LLM_TEMPERATURE").addEventListener("input", (ev) => {
+  $("LLM_TEMPERATURE-v").textContent = Number(ev.target.value).toFixed(1);
+});
+
+$("WAKE_SENSITIVITY").addEventListener("input", (ev) => {
+  $("WAKE_SENSITIVITY-v").textContent = Number(ev.target.value).toFixed(2);
+});
+
+$("WAKE_SILENCE").addEventListener("input", (ev) => {
+  $("WAKE_SILENCE-v").textContent = Number(ev.target.value).toFixed(1) + "s";
+});
+
+$("WAKE_SESSION_SECONDS").addEventListener("input", (ev) => {
+  const v = Number(ev.target.value);
+  $("WAKE_SESSION_SECONDS-v").textContent = v > 0 ? v + "s" : "关";
+});
+
+$("MCP_MAX_ROUNDS").addEventListener("input", (ev) => {
+  const v = Number(ev.target.value);
+  $("MCP_MAX_ROUNDS-v").textContent = v === 0 ? "只判定" : String(v);
+});
+
+$("MCP_TIMEOUT").addEventListener("input", (ev) => {
+  $("MCP_TIMEOUT-v").textContent = ev.target.value + "s";
+});
+
+$("MCP_MAX_TOOLS").addEventListener("input", (ev) => {
+  $("MCP_MAX_TOOLS-v").textContent = ev.target.value;
+});
+
+$("btn-wake-test").addEventListener("click", async () => {
+  const text = $("wake-test-text").value.trim();
+  const phrase = $("WAKE_PHRASE").value.trim();
+  const target = $("wake-test-status");
+  if (!text) {
+    status(target, "先填一句要试的话，比如 whisper 可能听成的「小兰小兰，现在几点」", "");
+    return;
+  }
+  const params = new URLSearchParams({ text, phrase });
+  try {
+    const data = await fetch("/api/wake/test?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    if (!data.ok) {
+      status(target, data.error || "比对失败", "bad");
+      return;
+    }
+    if (data.hit) {
+      const mode = data.mode ? "（" + data.mode + "匹配）" : "";
+      status(
+        target,
+        data.rest
+          ? "✓ 命中" + mode + "，「" + data.rest + "」会被当成这一次的指令直接发出去"
+          : "✓ 命中" + mode + "，会接着说一句，命中后单独说的那句也算",
+        "ok"
+      );
+    } else {
+      status(target, "✗ 没命中：换个说法再试，或把提示词改短、改成叠词", "bad");
+    }
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+// ---------------- 联网搜索 ----------------
+$("SEARCH_RESULTS").addEventListener("input", (ev) => {
+  $("SEARCH_RESULTS-v").textContent = ev.target.value;
+});
+$("SEARCH_TIMEOUT").addEventListener("input", (ev) => {
+  $("SEARCH_TIMEOUT-v").textContent = ev.target.value + "s";
+});
+
+$("btn-search-test").addEventListener("click", async () => {
+  const target = $("search-test-status");
+  const box = $("search-test-result");
+  const q = $("search-test-q").value.trim() || "今天有什么新闻";
+  box.textContent = "";
+  status(target, "搜索中…", "");
+  const params = new URLSearchParams({
+    q,
+    searx_endpoint: $("SEARCH_ENDPOINT").value.trim(),
+    search_endpoint: $("SEARCH_ENDPOINT").value.trim(),
+    search_key: $("SEARCH_KEY").value.trim(),
+    search_backend: segValue("SEARCH_BACKEND") || "",
+    search_results: $("SEARCH_RESULTS").value,
+    search_timeout: $("SEARCH_TIMEOUT").value,
+  });
+  try {
+    const data = await fetch("/api/search/test?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    const judge = data.should_search === undefined
+      ? ""
+      : "｜自动判断：" + (data.should_search ? "会去查" : "不查") + "（" + data.reason + "）";
+    if (!data.ok) {
+      status(target, "✗ " + (data.error || "没查到") + judge, "bad");
+      return;
+    }
+    status(target, "✓ " + data.backend + " 返回 " + data.results.length + " 条，" + data.ms + " ms" + judge, "ok");
+    const lines = data.results.slice(0, 4).map((r, i) => {
+      const title = r.title || r.url || "(无标题)";
+      const snip = (r.snippet || "").slice(0, 90);
+      return (i + 1) + ". " + title + (snip ? " — " + snip : "");
+    });
+    box.textContent = lines.join("\n");
+    box.style.whiteSpace = "pre-wrap";
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+// ---------------- 语音打开应用 ----------------
+$("btn-apps-test").addEventListener("click", async () => {
+  const target = $("apps-test-status");
+  const raw = $("apps-test-name").value.trim();
+  if (!raw) {
+    status(target, "先填一个应用名，比如「打开记事本」", "");
+    return;
+  }
+  status(target, "查找中…", "");
+  try {
+    const data = await fetch("/api/apps/open?name=" + encodeURIComponent(raw), { headers: HEADERS })
+      .then((r) => r.json());
+    if (data.ok) status(target, "✓ " + data.say, "ok");
+    else status(target, "✗ " + data.say + (data.error ? "（" + data.error + "）" : ""), "bad");
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+async function loadApps() {
+  const el = $("apps-count");
+  try {
+    const data = await fetch("/api/apps", { headers: HEADERS }).then((r) => r.json());
+    if (!data.ok) {
+      el.textContent = "读取应用清单失败：" + (data.error || "未知原因");
+      return;
+    }
+    const names = data.apps.slice(0, 8).map((a) => a.name).join("、");
+    el.textContent = "本机已识别 " + data.count + " 个可打开的应用，例如：" + names + "…";
+  } catch (err) {
+    el.textContent = "读取应用清单失败：" + err;
+  }
+}
+
+// ---------------- MCP 工具 ----------------
+const MCP = { servers: [], status: {}, presets: [], path: "", dirty: false, timer: null };
+
+function parseKV(text) {
+  const out = {};
+  String(text || "").split("\n").forEach((line) => {
+    const raw = line.trim();
+    if (!raw || raw.startsWith("#")) return;
+    let cut = raw.indexOf("=");
+    if (cut < 0) cut = raw.indexOf(":");
+    if (cut <= 0) return;
+    const key = raw.slice(0, cut).trim();
+    if (key) out[key] = raw.slice(cut + 1).trim();
+  });
+  return out;
+}
+
+function kvText(obj) {
+  const src = obj || {};
+  return Object.keys(src).map((k) => k + "=" + src[k]).join("\n");
+}
+
+function newServer(kind) {
+  const base = { name: "server", type: kind || "stdio", enabled: true };
+  if (kind === "http") {
+    base.url = "";
+    base.headers = {};
+  } else {
+    base.command = "";
+    base.args = [];
+    base.env = {};
+    base.cwd = "";
+  }
+  return base;
+}
+
+function uniqueName(name) {
+  const used = MCP.servers.map((s) => s.name);
+  if (!used.includes(name)) return name;
+  let i = 2;
+  while (used.includes(name + "-" + i)) i += 1;
+  return name + "-" + i;
+}
+
+function serverCard(s, i) {
+  // 来自 mcp/ 目录的服务是只读的：文件才是唯一的真相
+  const isDir = s.source === "dir";
+  const ro = isDir ? " disabled" : "";
+  const kindOptions =
+    '<option value="stdio"' + (s.type === "stdio" ? " selected" : "") + '>本地进程</option>' +
+    '<option value="http"' + (s.type === "http" ? " selected" : "") + '>远程 HTTP</option>';
+
+  const body = s.type === "http"
+    ? '<div class="mcp-sub single">' +
+        '<div><label>地址</label><input type="text" data-field="url" value="' + escapeHtml(s.url || "") +
+        '" placeholder="http://127.0.0.1:8000/mcp"' + ro + '></div>' +
+      "</div>" +
+      '<div class="mcp-sub single">' +
+        '<div><label>请求头（KEY=VALUE，每行一条，可放 token）</label>' +
+        '<textarea data-field="headers" rows="2" placeholder="Authorization=Bearer xxx"' + ro + '>' +
+        escapeHtml(kvText(s.headers)) + "</textarea></div>" +
+      "</div>"
+    : '<div class="mcp-sub">' +
+        '<div><label>启动命令</label><input type="text" data-field="command" value="' +
+        escapeHtml(s.command || "") + '" placeholder="npx / uvx / python"' + ro + '></div>' +
+        '<div><label>工作目录（可空）</label><input type="text" data-field="cwd" value="' +
+        escapeHtml(s.cwd || "") + '" placeholder="D:\\workspace"' + ro + '></div>' +
+      "</div>" +
+      '<div class="mcp-sub single">' +
+        '<div><label>参数（空格分隔）</label><input type="text" data-field="args" value="' +
+        escapeHtml((s.args || []).join(" ")) + '" placeholder="-y @modelcontextprotocol/server-filesystem D:\\workspace"' + ro + '></div>' +
+      "</div>" +
+      '<div class="mcp-sub single">' +
+        '<div><label>环境变量（KEY=VALUE，每行一条）</label>' +
+        '<textarea data-field="env" rows="2" placeholder="API_KEY=xxx"' + ro + '>' +
+        escapeHtml(kvText(s.env)) + "</textarea></div>" +
+      "</div>";
+
+  return '<div class="mcp-item" data-idx="' + i + '">' +
+    '<div class="mcp-head">' +
+      '<input type="text" class="mcp-name" data-field="name" value="' + escapeHtml(s.name || "") + '" placeholder="服务器名称"' + ro + '>' +
+      '<select data-field="type"' + ro + '>' + kindOptions + "</select>" +
+      '<label class="check"><input type="checkbox" data-field="enabled"' + (s.enabled ? " checked" : "") + ro + '><span>启用</span></label>' +
+      (isDir ? '<span class="tool-chip" title="来自 mcp/ 目录，改文件后点「重连」">📁 目录</span>' : "") +
+      '<button type="button" class="act tiny" data-act="test">测试</button>' +
+      (isDir ? "" : '<button type="button" class="act tiny danger" data-act="del">删除</button>') +
+    "</div>" +
+    (isDir ? '<div class="sub">来自 <code>' + escapeHtml(s.dir || "mcp/") +
+      '</code>：改那个目录里的文件，然后点上面的「重连」生效。</div>' : "") +
+    body +
+    '<div class="mcp-tools">' + serverStatusHtml(s.name) + "</div>" +
+    '<div class="status mcp-res"></div>' +
+  "</div>";
+}
+
+function serverStatusHtml(name) {
+  const st = MCP.status[name];
+  if (!st) return '<span class="tool-chip">未连接</span>';
+  if (!st.ok) {
+    return '<span class="tool-chip" style="color:var(--danger)">✗ ' +
+      escapeHtml(st.error || "连接失败") + "</span>";
+  }
+  const chips = (st.tools || []).map((t) =>
+    '<span class="tool-chip"><b>' + escapeHtml(t.name) + "</b></span>"
+  ).join("");
+  return '<span class="tool-chip" style="color:var(--ok)">✓ ' + st.ms + "ms · " +
+    (st.tools || []).length + " 个工具</span>" + chips;
+}
+
+function renderMcpList() {
+  const box = $("mcp-list");
+  if (!MCP.servers.length) {
+    box.innerHTML = '<div class="empty">还没有服务器。从下面的示例里挑一个，或者加个空白的手动填。</div>';
+    return;
+  }
+  box.innerHTML = MCP.servers.map((s, i) => serverCard(s, i)).join("");
+}
+
+function mcpPayload(s) {
+  const out = { name: String(s.name || "").trim(), type: s.type, enabled: !!s.enabled };
+  if (s.source === "dir") out.source = "dir";   // 后端据此跳过，不写进配置文件
+  if (s.type === "http") {
+    out.url = s.url || "";
+    out.headers = s.headers || {};
+  } else {
+    out.command = s.command || "";
+    out.args = s.args || [];
+    out.env = s.env || {};
+    if (s.cwd) out.cwd = s.cwd;
+  }
+  return out;
+}
+
+async function loadMcp() {
+  try {
+    const data = await fetch("/api/mcp", { headers: HEADERS }).then((r) => r.json());
+    if (!data.ok) {
+      status($("mcp-status"), "读取失败：" + (data.error || ""), "bad");
+      return;
+    }
+    MCP.servers = data.servers || [];
+    MCP.status = data.status || {};
+    MCP.presets = data.presets || [];
+    MCP.path = data.path || "";
+    MCP.dirty = false;
+    renderMcpList();
+    const sel = $("mcp-preset");
+    sel.innerHTML = MCP.presets.map((p, i) =>
+      '<option value="' + i + '">' + escapeHtml(p.name) + "（" + p.type + "）</option>"
+    ).join("");
+    paintMcpSummary(data.summary);
+    $("mcp-file").innerHTML = "服务器清单：<code>" + escapeHtml(MCP.path) + "</code>　" +
+      (data.error ? '<span style="color:var(--danger)">' + escapeHtml(data.error) + "</span>" : "含 token 时不会进 git");
+  } catch (err) {
+    status($("mcp-status"), "读取失败：" + err, "bad");
+  }
+}
+
+function paintMcpSummary(sum) {
+  if (!sum) return;
+  const on = $("MCP_ENABLED").checked;
+  const badge = $("mcp-badge");
+  if (!on) badge.textContent = "关闭";
+  else if (sum.tools) badge.textContent = sum.tools + " 个工具";
+  else if (!sum.servers) badge.textContent = "未配置";
+  else badge.textContent = sum.connected ? "无工具" : "未连接";
+}
+
+async function refreshMcpStatus() {
+  try {
+    const data = await fetch("/api/mcp", { headers: HEADERS }).then((r) => r.json());
+    if (!data.ok) return;
+    MCP.status = data.status || {};
+    document.querySelectorAll(".mcp-item").forEach((el) => {
+      const idx = Number(el.dataset.idx);
+      const srv = MCP.servers[idx];
+      const box = el.querySelector(".mcp-tools");
+      if (box && srv) box.innerHTML = serverStatusHtml(srv.name);
+    });
+    paintMcpSummary(data.summary);
+  } catch (err) { /* 轮询失败不打扰用户 */ }
+}
+
+function startMcpPoll(times) {
+  clearInterval(MCP.timer);
+  let n = 0;
+  MCP.timer = setInterval(async () => {
+    await refreshMcpStatus();
+    n += 1;
+    if (n >= (times || 10)) clearInterval(MCP.timer);
+  }, 1500);
+}
+
+$("btn-mcp-blank").addEventListener("click", () => {
+  MCP.servers.push(newServer("stdio"));
+  MCP.dirty = true;
+  renderMcpList();
+  markDirty("mcp");
+});
+
+$("btn-mcp-add").addEventListener("click", () => {
+  const idx = Number($("mcp-preset").value || 0);
+  const preset = MCP.presets[idx];
+  if (!preset) return;
+  const copy = JSON.parse(JSON.stringify(preset));
+  copy.name = uniqueName(copy.name);
+  MCP.servers.push(copy);
+  MCP.dirty = true;
+  renderMcpList();
+  markDirty("mcp");
+  status($("mcp-status"), "已添加示例「" + copy.name + "」，确认参数后点「保存服务器」", "");
+});
+
+$("mcp-list").addEventListener("input", (ev) => {
+  const item = ev.target.closest(".mcp-item");
+  const field = ev.target.dataset.field;
+  if (!item || !field) return;
+  const srv = MCP.servers[Number(item.dataset.idx)];
+  if (!srv) return;
+  const value = ev.target.type === "checkbox" ? ev.target.checked : ev.target.value;
+  if (field === "args") srv.args = String(value).split(/\s+/).filter(Boolean);
+  else if (field === "env") srv.env = parseKV(value);
+  else if (field === "headers") srv.headers = parseKV(value);
+  else srv[field] = value;
+  MCP.dirty = true;
+  markDirty("mcp");
+});
+
+$("mcp-list").addEventListener("change", (ev) => {
+  const item = ev.target.closest(".mcp-item");
+  if (!item) return;
+  const idx = Number(item.dataset.idx);
+  const srv = MCP.servers[idx];
+  if (!srv) return;
+  if (ev.target.dataset.field === "type") {
+    srv.type = ev.target.value;
+    if (srv.type === "http" && !srv.headers) srv.headers = {};
+    if (srv.type === "stdio" && !srv.args) { srv.args = []; srv.env = srv.env || {}; }
+    MCP.dirty = true;
+    renderMcpList();
+    markDirty("mcp");
+  } else if (ev.target.dataset.field === "enabled") {
+    srv.enabled = ev.target.checked;
+    MCP.dirty = true;
+    markDirty("mcp");
+  }
+});
+
+$("mcp-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const item = btn.closest(".mcp-item");
+  const idx = Number(item.dataset.idx);
+  const srv = MCP.servers[idx];
+  if (!srv) return;
+
+  if (btn.dataset.act === "del") {
+    MCP.servers.splice(idx, 1);
+    MCP.dirty = true;
+    renderMcpList();
+    markDirty("mcp");
+    return;
+  }
+  if (btn.dataset.act === "test") {
+    // 结果框靠 .mcp-res 认人，写结果时必须把它保留在 className 里 ——
+    // 否则第二次点测试就取到 null、整段 handler 静默崩掉，表现为「改了配置再测没反应」
+    const res = item.querySelector(".mcp-res") || item.lastElementChild;
+    if (!res) return;
+    const show = (kind, text) => {
+      res.className = "status mcp-res" + (kind ? " " + kind : "");
+      res.textContent = text;
+    };
+    show("", "连接中…（首次可能要下包，慢一点正常）");
+    btn.disabled = true;
+    try {
+      const data = await fetch("/api/mcp/test", {
+        method: "POST", headers: HEADERS,
+        body: JSON.stringify({ server: mcpPayload(srv) }),
+      }).then((r) => r.json());
+      if (data.ok) {
+        show("ok", "✓ " + data.ms + "ms，发现 " + (data.tools || []).length + " 个工具：" +
+          (data.tools || []).map((t) => t.name).join("、"));
+      } else {
+        show("bad", "✗ " + (data.error || "连接失败"));
+      }
+    } catch (err) {
+      show("bad", "请求失败：" + err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+});
+
+async function saveMcp() {
+  status($("mcp-status"), "保存并重连中…", "");
+  try {
+    const res = await fetch("/api/mcp/save", {
+      method: "POST", headers: HEADERS,
+      body: JSON.stringify({ servers: MCP.servers.map(mcpPayload) }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      status($("mcp-status"), "保存失败：" + (data.error || res.statusText), "bad");
+      return false;
+    }
+    MCP.servers = data.servers || MCP.servers;
+    MCP.dirty = false;
+    renderMcpList();
+    status($("mcp-status"), "已保存，" + (data.reloading ? "正在后台连接…" : "总开关是关的，未启动"), "ok");
+    if (data.reloading) startMcpPoll(12);
+    return true;
+  } catch (err) {
+    status($("mcp-status"), "保存失败：" + err, "bad");
+    return false;
+  }
+}
+
+$("btn-mcp-save").addEventListener("click", saveMcp);
+
+$("btn-mcp-reconnect").addEventListener("click", async () => {
+  const btn = $("btn-mcp-reconnect");
+  btn.disabled = true;
+  try {
+    const data = await fetch("/api/mcp/reconnect", { method: "POST", headers: HEADERS })
+      .then((r) => r.json());
+    if (!data.ok) {
+      status($("mcp-status"), data.error || "重连失败", "bad");
+      return;
+    }
+    status($("mcp-status"), "正在重连…", "");
+    startMcpPoll(12);
+  } catch (err) {
+    status($("mcp-status"), "重连失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------- 性格预设 ----------------
+const PERSONA = { list: [], id: "default", timer: null };
+
+function personaCard(p) {
+  const voice = p.voice
+    ? "音色 " + String(p.voice.voice).replace("Neural", "") + " · " + p.voice.rate
+    : "沿用当前音色";
+  return '<button type="button" class="persona" data-id="' + p.id + '" aria-pressed="' +
+    (p.id === PERSONA.id) + '" title="' + escapeHtml(p.desc || "") + '">' +
+    '<div class="p-top"><span class="p-emoji">' + p.emoji + "</span>" +
+    '<span class="p-name">' + escapeHtml(p.name) + "</span>" +
+    '<span class="p-on">已选</span></div>' +
+    '<div class="p-tag">' + escapeHtml(p.tagline) + "</div>" +
+    '<div class="p-voice">' + escapeHtml(voice) + "</div></button>";
+}
+
+function renderPersonaGrid() {
+  const grid = $("persona-grid");
+  if (!PERSONA.list.length) {
+    grid.innerHTML = '<div class="empty">性格列表还没读到</div>';
+    return;
+  }
+  grid.innerHTML = PERSONA.list.map(personaCard).join("");
+  const cur = PERSONA.list.find((p) => p.id === PERSONA.id);
+  $("persona-badge").textContent = cur ? cur.name : "—";
+  const custom = document.querySelector('[data-group="persona-custom"]');
+  if (custom) custom.classList.toggle("hidden", PERSONA.id !== "custom");
+}
+
+function setVoiceOption(name) {
+  const sel = $("TTS_VOICE");
+  if (!Array.from(sel.options).some((o) => o.value === name)) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = String(name).replace("Neural", "") + " · 预设音色";
+    sel.appendChild(o);
+  }
+  sel.value = name;
+}
+
+function fillPersonaVoice(id) {
+  const p = PERSONA.list.find((x) => x.id === id);
+  if (!p || !p.voice) return false;
+  setVoiceOption(p.voice.voice);
+  $("TTS_RATE").value = p.voice.rate;
+  $("TTS_PITCH").value = p.voice.pitch;
+  markDirty("tts");
+  return true;
+}
+
+async function refreshPersonaPrompt() {
+  const params = new URLSearchParams({ preset: PERSONA.id, extra: $("PERSONA_EXTRA").value });
+  try {
+    const data = await fetch("/api/persona?" + params.toString(), { headers: HEADERS })
+      .then((r) => r.json());
+    $("persona-prompt-view").textContent = data.composed || "（没有人设，只有系统的格式规则）";
+  } catch (err) {
+    $("persona-prompt-view").textContent = "读取失败：" + err;
+  }
+}
+
+function selectPersona(id) {
+  PERSONA.id = id;
+  renderPersonaGrid();
+  if ($("PERSONA_VOICE").checked) fillPersonaVoice(id);
+  markDirty("persona");
+  refreshPersonaPrompt();
+}
+
+$("persona-grid").addEventListener("click", (ev) => {
+  const card = ev.target.closest(".persona[data-id]");
+  if (card) selectPersona(card.dataset.id);
+});
+
+$("PERSONA_VOICE").addEventListener("change", (ev) => {
+  if (ev.target.checked) fillPersonaVoice(PERSONA.id);
+});
+
+$("PERSONA_EXTRA").addEventListener("input", () => {
+  clearTimeout(PERSONA.timer);
+  PERSONA.timer = setTimeout(refreshPersonaPrompt, 400);
+});
+
+$("btn-persona-view").addEventListener("click", refreshPersonaPrompt);
+
+$("btn-persona-test").addEventListener("click", async () => {
+  const target = $("persona-test-status");
+  const q = $("persona-test-q").value.trim() || "今天有点累";
+  const cur = PERSONA.list.find((p) => p.id === PERSONA.id);
+  status(target, "正在用「" + (cur ? cur.name : PERSONA.id) + "」回答…", "");
+  try {
+    const data = await fetch("/api/persona/preview", {
+      method: "POST", headers: HEADERS,
+      body: JSON.stringify({ preset: PERSONA.id, question: q, extra: $("PERSONA_EXTRA").value }),
+    }).then((r) => r.json());
+    if (!data.ok) {
+      status(target, "✗ " + (data.error || "没答上来"), "bad");
+      return;
+    }
+    status(target, "✓ " + data.name + "（" + data.ms + "ms）：" + data.reply, "ok");
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+});
+
+async function loadPersona() {
+  try {
+    const data = await fetch("/api/persona", { headers: HEADERS }).then((r) => r.json());
+    PERSONA.list = data.presets || [];
+    PERSONA.id = data.current || "default";
+    $("PERSONA_EXTRA").value = data.extra || "";
+    $("PERSONA_PROMPT").value = data.custom || "";
+    $("PERSONA_VOICE").checked = !!data.use_voice;
+    renderPersonaGrid();
+    $("persona-prompt-view").textContent = data.composed || "—";
+  } catch (err) {
+    $("persona-grid").innerHTML = '<div class="empty">读取性格列表失败：' + escapeHtml(err) + "</div>";
+  }
+}
+
+// ---------------- 大模型服务 ----------------
+function syncPreset() {
+  const provider = segValue("LLM_PROVIDER");
+  const base = provider === "ollama" ? $("OLLAMA_HOST").value.trim() : $("OPENAI_BASE").value.trim();
+  const idx = SERVICES.findIndex((s) => {
+    if (svcKind(s) !== provider) return false;
+    const addr = svcKind(s) === "ollama" ? (s.host || "") : (s.base || "");
+    return addr && addr === base;
+  });
+  $("preset").value = idx >= 0 ? String(idx) : "";
+}
+
+$("preset").addEventListener("change", (ev) => {
+  const s = SERVICES[Number(ev.target.value)];
+  if (!s) return;
+  const kind = svcKind(s);
+  // 先把服务类型切过去，字段才显示得出来
+  setSeg("LLM_PROVIDER", kind);
+  if (kind === "ollama") {
+    $("OLLAMA_HOST").value = s.host || "";
+    fillOllamaModels(OLLAMA_MODELS, s.model || "");
+    status($("llm-status"), "已切到「" + s.name + "」，点「保存并应用」生效", "");
+  } else {
+    $("OPENAI_BASE").value = s.base || "";
+    $("OPENAI_MODEL").value = s.model || "";
+    const keyInput = $("OPENAI_KEY");
+    keyInput.value = "";
+    delete keyInput.dataset.cleared;
+    keyInput.placeholder = s.key_set
+      ? "已保存 " + s.key + "，留空表示沿用"
+      : "sk-...（保存后只显示末四位）";
+    status($("llm-status"), "已切到「" + s.name + "」，点「保存并应用」生效", "");
+  }
+  markDirty("llm");
+});
+
+$("btn-svc-add").addEventListener("click", () => {
+  const provider = segValue("LLM_PROVIDER");
+  const isLocal = provider === "ollama";
+  const addr = isLocal ? $("OLLAMA_HOST").value.trim() : $("OPENAI_BASE").value.trim();
+  const model = isLocal ? $("LLM_MODEL").value : $("OPENAI_MODEL").value.trim();
+  const key = isLocal ? "" : $("OPENAI_KEY").value.trim();
+  if (!addr) {
+    status($("llm-status"), (isLocal ? "先填 Ollama 地址" : "先填接口地址") + "再存", "bad");
+    return;
+  }
+  const suggestion = model || addr.replace(/^https?:\/\//, "").split("/")[0];
+  const name = (prompt("给这个服务起个名字，以后在下拉里就能直接选", suggestion) || "").trim();
+  if (!name) return;
+  const entry = {
+    name,
+    provider,
+    base: isLocal ? "" : addr,
+    host: isLocal ? addr : "",
+    model: model || "",
+    key,
+  };
+  const idx = SERVICES.findIndex((s) => s.name === name);
+  if (idx >= 0) {
+    const old = SERVICES[idx];
+    SERVICES[idx] = { ...old, ...entry, key: key || old.key || "" };
+  } else {
+    SERVICES.push(entry);
+  }
+  renderServices(String(SERVICES.findIndex((s) => s.name === name)));
+  markDirty("llm");
+  status($("llm-status"), "已记下「" + name + "」，点右下角「保存并应用」写入", "ok");
+});
+
+$("btn-svc-del").addEventListener("click", () => {
+  const idx = Number($("preset").value);
+  const s = SERVICES[idx];
+  if (!s) {
+    status($("llm-status"), "先在下拉里选一个要删的服务", "bad");
+    return;
+  }
+  SERVICES.splice(idx, 1);
+  renderServices("");
+  markDirty("llm");
+  status($("llm-status"), "已从列表移除「" + s.name + "」，点「保存并应用」生效", "");
+});
+
+$("btn-clear-key").addEventListener("click", () => {
+  const input = $("OPENAI_KEY");
+  input.value = "";
+  // 打标记：保存时显式提交空值，否则「清空」会被当成「没改」
+  input.dataset.cleared = "1";
+  input.placeholder = "已清空，保存后生效";
+});
+
+$("OPENAI_KEY").addEventListener("input", (ev) => {
+  delete ev.target.dataset.cleared;
+});
+
+$("btn-clear-tts-key").addEventListener("click", () => {
+  const input = $("TTS_CUSTOM_KEY");
+  input.value = "";
+  input.dataset.cleared = "1";
+  input.placeholder = "已清空，保存后生效";
+});
+
+$("TTS_CUSTOM_KEY").addEventListener("input", (ev) => {
+  delete ev.target.dataset.cleared;
+});
+
+async function fetchModels(kind) {
+  const isOpenai = kind === "openai";
+  const target = $("llm-status");
+  status(target, "正在获取模型列表…", "");
+  const params = new URLSearchParams({ provider: kind });
+  if (isOpenai) {
+    params.set("base", $("OPENAI_BASE").value.trim());
+    params.set("key", $("OPENAI_KEY").value.trim());
+  } else {
+    params.set("host", $("OLLAMA_HOST").value.trim());
+  }
+  try {
+    const res = await fetch("/api/models?" + params.toString(), { headers: HEADERS });
+    const data = await res.json();
+    if (!data.ok) {
+      status(target, data.error || "获取失败", "bad");
+      return;
+    }
+    if (isOpenai) {
+      $("model-suggest").innerHTML = data.models.map((m) => '<option value="' + m + '">').join("");
+      status(target, "共 " + data.models.length + " 个可用模型，已填入输入框候选", "ok");
+      if (data.models.length && !data.models.includes($("OPENAI_MODEL").value)) {
+        $("OPENAI_MODEL").value = data.models[0];
+      }
+    } else {
+      fillOllamaModels(data.models, $("LLM_MODEL").value);
+      status(target, "本地共 " + data.models.length + " 个模型", "ok");
+    }
+  } catch (err) {
+    status(target, "请求失败：" + err, "bad");
+  }
+}
+
+$("btn-ollama-models").addEventListener("click", () => fetchModels("ollama"));
+$("btn-openai-models").addEventListener("click", () => fetchModels("openai"));
+
+// 本地模型的起停都由用户决定，助手启动时不再自动拉起它
+$("btn-ollama-start").addEventListener("click", async () => {
+  const btn = $("btn-ollama-start");
+  btn.disabled = true;
+  status($("ollama-status"), "启动中…（第一次要载入模型，十几秒正常）", "");
+  try {
+    const data = await fetch("/api/llm/ollama/start", {
+      method: "POST", headers: HEADERS, body: "{}",
+    }).then((r) => r.json());
+    if (data.ok) {
+      status($("ollama-status"), "✓ " + data.detail, "ok");
+      fetchModels("ollama");
+    } else {
+      status($("ollama-status"), "✗ " + (data.detail || "启动失败"), "bad");
+    }
+  } catch (err) {
+    status($("ollama-status"), "启动失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-ollama-stop").addEventListener("click", async () => {
+  const btn = $("btn-ollama-stop");
+  btn.disabled = true;
+  status($("ollama-status"), "正在停止…", "");
+  try {
+    const data = await fetch("/api/llm/ollama/stop", {
+      method: "POST", headers: HEADERS, body: "{}",
+    }).then((r) => r.json());
+    status($("ollama-status"), (data.ok ? "✓ " : "✗ ") + (data.detail || ""),
+      data.ok ? "ok" : "bad");
+    if (data.ok) fetchModels("ollama");
+  } catch (err) {
+    status($("ollama-status"), "停止失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-test").addEventListener("click", async () => {
+  const btn = $("btn-test");
+  btn.disabled = true;
+  status($("llm-status"), "测试中…", "");
+  try {
+    const payload = {
+      LLM_PROVIDER: segValue("LLM_PROVIDER"),
+      OLLAMA_HOST: $("OLLAMA_HOST").value.trim(),
+      OPENAI_BASE: $("OPENAI_BASE").value.trim(),
+      OPENAI_KEY: $("OPENAI_KEY").value.trim(),
+    };
+    const res = await fetch("/api/llm/test", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    const data = await res.json();
+    status($("llm-status"), (data.ok ? "✓ " : "✗ ") + data.detail + "（" + data.ms + "ms）", data.ok ? "ok" : "bad");
+  } catch (err) {
+    status($("llm-status"), "测试失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-preview").addEventListener("click", async () => {
+  const btn = $("btn-preview");
+  btn.disabled = true;
+  status($("tts-status"), "合成中…", "");
+  try {
+    const engine = segValue("TTS_ENGINE");
+    const payload = {
+      text: "你好，我是你的语音助手。今天天气不错，有什么可以帮你的吗？",
+      engine,
+      voice: engine === "sapi" ? $("SAPI_VOICE").value
+        : engine === "custom" ? $("TTS_CUSTOM_VOICE").value.trim()
+        : $("TTS_VOICE").value,
+      rate: $("TTS_RATE").value.trim(),
+    };
+    if (engine === "custom") {
+      // 允许用还没保存的地址/Key 先试听
+      payload.custom_base = $("TTS_CUSTOM_BASE").value.trim();
+      payload.custom_model = $("TTS_CUSTOM_MODEL").value.trim();
+      payload.custom_format = $("TTS_CUSTOM_FORMAT").value;
+      const k = $("TTS_CUSTOM_KEY").value.trim();
+      if (k) payload.custom_key = k;
+    }
+    const res = await fetch("/api/tts/preview", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ error: res.statusText }));
+      status($("tts-status"), detail.error || "合成失败", "bad");
+      return;
+    }
+    const blob = await res.blob();
+    const audio = $("preview");
+    if (audio.dataset.url) URL.revokeObjectURL(audio.dataset.url);
+    const url = URL.createObjectURL(blob);
+    audio.dataset.url = url;
+    audio.src = url;
+    audio.play().catch(() => {});
+    status($("tts-status"), "✓ 已生成 " + Math.round(blob.size / 1024) + " KB", "ok");
+  } catch (err) {
+    status($("tts-status"), "试听失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("btn-reload").addEventListener("click", async () => {
+  await load();
+  await loadMcp();
+});
+
+$("btn-save").addEventListener("click", async () => {
+  const btn = $("btn-save");
+  btn.disabled = true;
+  foot("保存中…");
+  const payload = {
+    LLM_PROVIDER: segValue("LLM_PROVIDER"),
+    OLLAMA_HOST: $("OLLAMA_HOST").value.trim(),
+    LLM_MODEL: $("LLM_MODEL").value,
+    LLM_TEMPERATURE: Number($("LLM_TEMPERATURE").value),
+    LLM_NUM_CTX: $("LLM_NUM_CTX").value,
+    MAX_HISTORY_TURNS: $("MAX_HISTORY_TURNS").value,
+    OPENAI_BASE: $("OPENAI_BASE").value.trim(),
+    OPENAI_MODEL: $("OPENAI_MODEL").value.trim(),
+    LLM_SERVICES: JSON.stringify(SERVICES),
+    TTS_ENGINE: segValue("TTS_ENGINE"),
+    TTS_VOICE: $("TTS_VOICE").value,
+    TTS_RATE: $("TTS_RATE").value.trim(),
+    TTS_PITCH: $("TTS_PITCH").value.trim(),
+    TTS_VOLUME: $("TTS_VOLUME").value.trim(),
+    TTS_FALLBACK_SAPI: $("TTS_FALLBACK_SAPI").checked,
+    TTS_CUSTOM_BASE: $("TTS_CUSTOM_BASE").value.trim(),
+    TTS_CUSTOM_VOICE: $("TTS_CUSTOM_VOICE").value.trim(),
+    TTS_CUSTOM_MODEL: $("TTS_CUSTOM_MODEL").value.trim(),
+    TTS_CUSTOM_FORMAT: $("TTS_CUSTOM_FORMAT").value,
+    SAPI_VOICE: $("SAPI_VOICE").value,
+    ASR_PROVIDER: segValue("ASR_PROVIDER"),
+    ASR_REMOTE_MODEL: $("ASR_REMOTE_MODEL").value.trim(),
+    WHISPER_MODEL: $("WHISPER_MODEL").value,
+    WHISPER_DEVICE: segValue("WHISPER_DEVICE"),
+    ASR_BEAM_SIZE: $("ASR_BEAM_SIZE").value,
+    ASR_NORMALIZE: $("ASR_NORMALIZE").checked,
+    ASR_PROMPT_MODE: $("ASR_PROMPT_MODE").value,
+    ASR_HOTWORDS: $("ASR_HOTWORDS").value.trim(),
+    APPS_ALIASES: $("APPS_ALIASES").value.trim(),
+    MIN_RECORD_SECONDS: $("MIN_RECORD_SECONDS").value,
+    MAX_RECORD_SECONDS: $("MAX_RECORD_SECONDS").value,
+    WEB_PORT: $("WEB_PORT").value,
+    WAKE_ENABLED: $("WAKE_ENABLED").checked,
+    WAKE_PHRASE: $("WAKE_PHRASE").value.trim(),
+    WAKE_SENSITIVITY: Number($("WAKE_SENSITIVITY").value),
+    WAKE_SILENCE: Number($("WAKE_SILENCE").value),
+    WAKE_SESSION_SECONDS: Number($("WAKE_SESSION_SECONDS").value),
+    BARGE_IN_ENABLED: $("BARGE_IN_ENABLED").checked,
+    BARGE_IN_SENSITIVITY: Number($("BARGE_IN_SENSITIVITY").value),
+    BARGE_IN_MIN_MS: Number($("BARGE_IN_MIN_MS").value),
+    SEARCH_MODE: segValue("SEARCH_MODE"),
+    SEARCH_BACKEND: segValue("SEARCH_BACKEND"),
+    SEARCH_ENDPOINT: $("SEARCH_ENDPOINT").value.trim(),
+    SEARCH_RESULTS: Number($("SEARCH_RESULTS").value),
+    SEARCH_TIMEOUT: Number($("SEARCH_TIMEOUT").value),
+    APPS_ENABLED: $("APPS_ENABLED").checked,
+    MCP_ENABLED: $("MCP_ENABLED").checked,
+    MCP_MAX_ROUNDS: Number($("MCP_MAX_ROUNDS").value),
+    MCP_TIMEOUT: Number($("MCP_TIMEOUT").value),
+    MCP_MAX_TOOLS: Number($("MCP_MAX_TOOLS").value),
+    PERSONA_PRESET: PERSONA.id,
+    PERSONA_PROMPT: $("PERSONA_PROMPT").value.trim(),
+    PERSONA_EXTRA: $("PERSONA_EXTRA").value.trim(),
+    PERSONA_VOICE: $("PERSONA_VOICE").checked,
+  };
+  if (payload.WAKE_ENABLED && !payload.WAKE_PHRASE) {
+    // 空提示词会让唤醒永远不命中，等于悄悄失效，不如直接拦下来
+    foot("唤醒提示词不能为空：要么填一句，要么把「常开唤醒」关掉", "bad");
+    btn.disabled = false;
+    return;
+  }
+  if (payload.PERSONA_PRESET === "custom" && !payload.PERSONA_PROMPT) {
+    // 自定义人设空着，等于悄悄退回默认语气，说清楚比让它「看着生效了」好
+    foot("选了「自定义」但人设是空的，它会退回默认语气。补一句人设，或换回某个预设", "bad");
+    btn.disabled = false;
+    return;
+  }
+  const keyInput = $("OPENAI_KEY");
+  if (keyInput.dataset.cleared === "1") {
+    payload.OPENAI_KEY = "";              // 用户点了「清除」
+  } else if (keyInput.value.trim()) {
+    payload.OPENAI_KEY = keyInput.value.trim();
+  }                                      // 留空则不动已存密钥
+
+  const searchKeyInput = $("SEARCH_KEY");
+  if (searchKeyInput.dataset.cleared === "1") {
+    payload.SEARCH_KEY = "";
+  } else if (searchKeyInput.value.trim()) {
+    payload.SEARCH_KEY = searchKeyInput.value.trim();
+  }
+
+  const ttsKeyInput = $("TTS_CUSTOM_KEY");
+  if (ttsKeyInput.dataset.cleared === "1") {
+    payload.TTS_CUSTOM_KEY = "";
+  } else if (ttsKeyInput.value.trim()) {
+    payload.TTS_CUSTOM_KEY = ttsKeyInput.value.trim();
+  }                                       // 留空则不动已存密钥
+
+  try {
+    const res = await fetch("/api/config", { method: "POST", headers: HEADERS, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      foot("保存失败：" + (data.error || res.statusText), "bad");
+      return;
+    }
+    // 服务器清单是独立文件，页面上改过就一起落盘
+    let mcpNote = "";
+    if (MCP.dirty) {
+      const okMcp = await saveMcp();
+      mcpNote = okMcp ? " · MCP 服务器已保存" : " · MCP 服务器保存失败";
+    }
+    const parts = [];
+    if (data.changed && data.changed.length) parts.push("已应用 " + data.changed.length + " 项改动");
+    else parts.push("没有改动");
+    if (data.asr && data.asr.ok === false) parts.push("识别服务重载失败：" + data.asr.error);
+    else if (data.asr && data.asr.device) parts.push("识别已切到 " + data.asr.device + "/" + data.asr.compute_type);
+    if (data.wake && data.wake.state) {
+      parts.push(data.wake.state === "listening" ? "唤醒已打开" : "唤醒 " + (data.wake.state === "off" ? "已关闭" : data.wake.state));
+    }
+    if (data.needs_restart && data.needs_restart.length) parts.push(data.needs_restart.join("、") + " 需重启生效");
+    if (data.restarted && data.restarted.length) parts.push("已自动生效：" + data.restarted.join("、"));
+    foot(parts.join(" · ") + mcpNote, data.needs_restart && data.needs_restart.length ? "warn" : "ok");
+    // 重新读取以刷新状态条与掩码
+    const fresh = await fetch("/api/state", { headers: HEADERS }).then((r) => r.json());
+    renderState(fresh);
+    clearDirty();
+    if (mcpNote) startMcpPoll(8);
+    // 换完服务/模型立刻验一次连通性：连不上要当场说清楚，
+    // 别等用户对着麦克风说话才发现「没反应」
+    if (data.restarted && data.restarted.includes("大模型连接")) {
+      status($("llm-status"), "正在验证新服务…", "");
+      try {
+        const probe = await fetch("/api/llm/test", {
+          method: "POST", headers: HEADERS, body: "{}",
+        }).then((r) => r.json());
+        status($("llm-status"),
+          (probe.ok ? "✓ 服务可用：" : "✗ 服务连不上：") + probe.detail +
+          "（配置已保存，可继续修改）", probe.ok ? "ok" : "bad");
+      } catch (err) {
+        status($("llm-status"), "验证请求失败：" + err + "（配置已保存）", "bad");
+      }
+    }
+    if (data.asr && data.asr.ok === false) {
+      status($("asr-status"), "重载失败：" + data.asr.error, "bad");
+    } else if (data.asr && data.asr.device) {
+      const info = [`✓ 已切到 ${data.asr.device} / ${data.asr.compute_type}`];
+      if (data.asr.model_size) info.push(`模型 ${data.asr.model_size}`);
+      status($("asr-status"), info.join("，"), "ok");
+    }
+  } catch (err) {
+    foot("保存失败：" + err, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// 键盘：alt+数字 直接跳模块，省得来回点
+document.addEventListener("keydown", (ev) => {
+  if (ev.target.matches("input, textarea, select")) return;
+  if (!ev.altKey) return;
+  const order = ["overview", "persona", "llm", "mcp", "asr", "tts", "wake", "barge", "search", "apps", "misc"];
+  const idx = ev.key === "0" ? 9 : Number(ev.key) - 1;
+  if (order[idx]) { ev.preventDefault(); showModule(order[idx]); }
+});
+
+// ---------------- 启动 ----------------
+showModule((location.hash || "").slice(1) || "overview", { hash: false });
+window.addEventListener("hashchange", () => showModule(location.hash.slice(1) || "overview", { hash: false }));
+load();
+loadPersona();
+loadMcp();
+loadApps();
+setInterval(pollLive, 2000);
+</script>
+</body>
+</html>

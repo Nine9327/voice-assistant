@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\workspace"],
+      "env": {}
+    },
+    "fetch": {
+      "type": "stdio",
+      "enabled": false,
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {}
+    },
+    "remote-example": {
+      "type": "http",
+      "enabled": false,
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer 在此填 token"
+      }
+    }
+  }
+}

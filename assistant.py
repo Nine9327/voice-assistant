@@ -1,0 +1,1250 @@
+"""本地语音助手 —— 三种唤醒方式共用一条链路。
+
+用法：
+    python assistant.py              正常语音交互（同时开配置页 + 唤醒监听）
+    python assistant.py --config     只开浏览器配置页，不加载模型、不占麦克风
+    python assistant.py --text "你好" 跳过录音，直接测大模型 + 播报
+    python assistant.py --no-audio    只打字，不播报
+    python assistant.py --no-web      不启动配置页
+    python assistant.py --no-wake     不监听唤醒词（只保留按住空格）
+
+三种触发来源最终都进同一条队列：
+    按住空格 / 说唤醒词 / 点一下桌面上的形象
+"""
+from __future__ import annotations
+
+import argparse
+import atexit
+import gc
+import os
+import queue
+import sys
+import threading
+import time
+from pathlib import Path
+
+_PKGS = Path(__file__).parent / "packages"
+if _PKGS.is_dir():
+    sys.path.insert(0, str(_PKGS))
+
+import single_instance
+
+ROOT = Path(__file__).parent
+RUNTIME_DIR = ROOT / ".runtime"
+LOG_FILE = RUNTIME_DIR / "assistant.log"
+PID_FILE = RUNTIME_DIR / "assistant.pid"
+
+
+def _ensure_streams() -> None:
+    """pythonw 启动时 stdout/stderr 是 None，任何 print 都会抛异常。
+
+    这里直接把它们接到日志文件上，既不报错，又能在出问题时翻记录。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        RUNTIME_DIR.mkdir(exist_ok=True)
+        stream = open(LOG_FILE, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    except OSError:
+        return
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
+_ensure_streams()
+
+
+def _install_crash_log() -> None:
+    """给「pythonw 下无声死亡」留下死因。
+
+    本进程出现过若干次凭空消失、日志一字不留的情况（对 pet.py 也发生过，
+    它靠这个钩子抓到过一次）。faulthandler 连段错误、死锁前的信号都能写进
+    日志；sys.excepthook 兜住普通未捕获异常 —— 默认它们都进 pythonw 的
+    黑洞 stderr，什么都留不下。
+    """
+    import faulthandler
+
+    try:
+        RUNTIME_DIR.mkdir(exist_ok=True)
+        fh = open(LOG_FILE, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        faulthandler.enable(file=fh, all_threads=True)
+    except OSError:
+        pass
+
+    def hook(exc_type, exc, tb) -> None:  # noqa: ANN001
+        import traceback
+
+        try:
+            with LOG_FILE.open("a", encoding="utf-8") as f:
+                f.write("\n[未捕获异常] " + "".join(traceback.format_exception(exc_type, exc, tb)))
+        except OSError:
+            pass
+
+    sys.excepthook = hook
+
+
+_install_crash_log()
+
+# 临时目录如果解析到项目根（TMP/TEMP 环境变量损坏时的兜底行为），
+# 合成音频的临时文件就会散落在项目里，还容易被占用出 WinError 32。
+# 记一行日志，出问题时能直接看出根因。
+import tempfile as _tempfile
+if Path(_tempfile.gettempdir()).resolve() == ROOT:
+    print(f"[警告] 临时目录解析到了项目根（TMP={os.environ.get('TMP')!r}），"
+          f"音频临时文件会落在项目目录里", file=sys.stderr)
+
+import apps  # noqa: E402
+import bargein  # noqa: E402
+import config  # noqa: E402
+import llm  # noqa: E402
+import mcp_tools  # noqa: E402
+import persona  # noqa: E402
+import search  # noqa: E402
+import wake as wake_mod  # noqa: E402
+from rich.console import Console  # noqa: E402
+from rich.panel import Panel  # noqa: E402
+
+console = Console()
+
+# 退出信号（Ctrl+C / 配置页 / 悬浮窗菜单都会置位）与「打断当前回答」
+STOP = threading.Event()
+INTERRUPT = threading.Event()
+
+
+class SpaceHotkey:
+    """全局监听空格键的按下 / 松开。"""
+
+    def __init__(self) -> None:
+        from pynput import keyboard
+
+        self._kb = keyboard
+        self.pressed = threading.Event()
+        self._listener = keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+        )
+
+    def _on_press(self, key) -> None:
+        if key == self._kb.Key.space:
+            self.pressed.set()
+
+    def _on_release(self, key) -> None:
+        if key == self._kb.Key.space:
+            self.pressed.clear()
+
+    def wait_press(self, timeout: float | None = None) -> bool:
+        """阻塞直到空格被按下。
+
+        用短超时轮询而不是无限 wait，这样主线程才能及时响应 Ctrl+C。
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not self.pressed.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            self.pressed.wait(0.1)
+        return True
+
+    def wait_release(self, timeout: float | None = None) -> bool:
+        """阻塞直到空格松开（录音超时截断后要用它等用户松手）。"""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.pressed.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            time.sleep(0.03)
+        return True
+
+    def start(self) -> None:
+        self._listener.start()
+
+    def stop(self) -> None:
+        try:
+            self._listener.stop()
+        except Exception:
+            pass
+
+
+class TriggerBus:
+    """三种触发来源的汇合点。
+
+    PTT   —— 按住空格，松手结束（最可控）
+    LISTEN —— 免按键录一句，靠静音自动断句（唤醒词命中、点悬浮窗）
+    QUERY —— 已经有文字了，直接进大模型（唤醒词后面跟了内容）
+    """
+
+    PTT = "ptt"
+    LISTEN = "listen"
+    QUERY = "query"
+
+    def __init__(self) -> None:
+        self._q: queue.Queue[tuple[str, str, str]] = queue.Queue()
+
+    def push(self, kind: str, text: str = "", heard: str = "") -> None:
+        self._q.put((kind, text, heard))
+
+    def get(self) -> tuple[str, str, str] | None:
+        try:
+            return self._q.get_nowait()
+        except queue.Empty:
+            return None
+
+    def clear(self) -> None:
+        while self.get() is not None:
+            pass
+
+
+# 启动一共分几步。桌面形象和配置页按 step/total 画进度，所以这里的数字
+# 就是界面上的格子数，加阶段时记得一起改。
+BOOT_STEPS = 6
+
+# 各识别模型首次要下载的体积，用来提示「为什么这次特别慢」
+_ASR_SIZE = {"tiny": "75MB", "base": "150MB", "small": "500MB", "medium": "1.5GB"}
+
+
+def _asr_size_hint() -> str:
+    """模型还没落到本地时才提示下载体积，已经有的就别吓唬人。"""
+    try:
+        import asr
+
+        model = asr.pick_model(config.WHISPER_DEVICE)
+    except Exception:  # noqa: BLE001
+        model = config.WHISPER_MODEL
+    size = _ASR_SIZE.get(model, "")
+    if not size:
+        return ""
+    from pathlib import Path
+
+    local = Path(config.MODEL_DIR) / f"faster-whisper-{model}"
+    # 下载下来的模型有两种落盘形态：直接解压的目录，或 HuggingFace 缓存的
+    # models--Systran--faster-whisper-xxx。两种都算「已经有了」，
+    # 否则每次启动都吓唬用户要下载 1.5GB。
+    cached = Path(config.MODEL_DIR) / f"models--Systran--faster-whisper-{model}"
+    if (local / "model.bin").exists() or cached.is_dir():
+        return ""
+    return f"首次运行需下载约 {size}"
+
+
+class LiveState:
+    """主循环对外暴露的状态。配置页和桌面悬浮窗都只读这里。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.status = "idle"      # sleeping / idle / listening / thinking / speaking
+        self.heard = ""
+        self.reply = ""
+        self.asr_ms = 0.0
+        self.bubble = ""
+        self.session_until = 0.0
+        self.note = ""            # 临时提示，如「正在查资料…」，覆盖 thinking 时的默认文案
+        # 启动进度。双击 start.vbs 启动是没有任何终端窗口的，桌面形象是唯一
+        # 能看见的东西，所以模型加载那几十秒必须有地方说出来。
+        self.boot_stage = ""      # 当前在做的事，空串表示已启动完毕
+        self.boot_step = 0
+        self.boot_total = 0
+        self.boot_detail = ""     # 括号里的补充，如「首次需下载约 1.5GB」
+
+    def update(self, status: str | None = None, heard: str | None = None,
+               reply: str | None = None, asr_ms: float | None = None,
+               session_until: float | None = None,
+               note: str | None = None) -> None:
+        with self._lock:
+            if status is not None:
+                if status != self.status:
+                    self.note = ""   # 状态变了，上一轮的临时提示就作废
+                self.status = status
+            if heard is not None:
+                self.heard = heard
+            if reply is not None:
+                self.reply = reply
+            if asr_ms is not None:
+                self.asr_ms = asr_ms
+            if session_until is not None:
+                self.session_until = session_until
+            if note is not None:
+                self.note = note
+            self.bubble = self._compose_bubble()
+
+    def boot(self, step: int, total: int, stage: str = "", detail: str = "") -> None:
+        """推进启动进度。step 从 1 开始；step>=total 表示启动结束（stage 可省）。"""
+        with self._lock:
+            self.boot_step = step
+            self.boot_total = total
+            self.boot_stage = "" if step >= total else stage
+            self.boot_detail = "" if step >= total else detail
+            # 启动结束（或失败）就回到空闲，别让界面一直停在「启动中」
+            self.status = "booting" if self.boot_stage else "idle"
+            self.bubble = self._compose_bubble()
+
+    def _compose_bubble(self) -> str:
+        if self.status == "booting":
+            return self.boot_stage or "启动中…"
+        if self.status == "listening":
+            return "我在听…"
+        if self.status == "thinking":
+            return self.note or "在想…"
+        if self.status == "speaking":
+            return self.reply.strip()[:64] or "…"
+        return ""
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "status": self.status,
+                "heard": self.heard,
+                "reply": self.reply,
+                "bubble": self.bubble,
+                "asr_ms": round(self.asr_ms),
+                # 会话保持的剩余秒数：配置页拿它显示「还能直接说多久」
+                "session": max(0, round(self.session_until - time.monotonic())),
+                # 启动进度：桌面形象和配置页靠它显示「到哪一步了」
+                "boot": {
+                    "stage": self.boot_stage,
+                    "detail": self.boot_detail,
+                    "step": self.boot_step,
+                    "total": self.boot_total,
+                },
+            }
+
+
+class AsrService:
+    """识别器的可热替换包装。
+
+    Web 配置页改了「识别服务 / 模型 / 设备」后，只要重建实例即可生效，
+    不用重启整个程序。重建前必须先释放旧模型：8G 显存里 7B 大模型已占 6.8G，
+    新旧两份 whisper 同时驻留很容易 OOM。
+    """
+
+    def __init__(self) -> None:
+        from asr import create_transcriber
+
+        self._lock = threading.Lock()
+        self._impl = create_transcriber()
+
+    @property
+    def device(self) -> str:
+        return str(getattr(self._impl, "device", "?"))
+
+    @property
+    def compute_type(self) -> str:
+        return str(getattr(self._impl, "compute_type", "?"))
+
+    @property
+    def model_size(self) -> str:
+        """实际用的模型。配置写 auto 时，GPU 上是 medium、CPU 上是 small，要如实回显。"""
+        return str(getattr(self._impl, "model_size", "") or getattr(self._impl, "compute_type", "?"))
+
+    @property
+    def prompt_words(self) -> int:
+        """领域词提示里塞了多少个词。页面上能看到「加了常用词」是不是真生效了。"""
+        try:
+            import asr
+
+            text = asr.build_initial_prompt(self.model_size)
+        except Exception:  # noqa: BLE001
+            return 0
+        if "常见词：" not in text:
+            return 0
+        body = text.split("常见词：", 1)[1].rstrip("。")
+        return body.count("、") + 1
+
+    def transcribe(self, audio):
+        with self._lock:
+            return self._impl.transcribe(audio)
+
+    def reload(self) -> dict:
+        from asr import create_transcriber
+
+        try:
+            new_impl = create_transcriber()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "device": self.device,
+                "compute_type": self.compute_type,
+            }
+
+        with self._lock:
+            old = self._impl
+            self._impl = new_impl
+        del old
+        gc.collect()
+        return {
+            "ok": True,
+            "device": new_impl.device,
+            "compute_type": new_impl.compute_type,
+            "model_size": getattr(new_impl, "model_size", ""),
+        }
+
+
+class RuntimeBridge:
+    """把运行期状态和重载能力交给配置页服务。
+
+    配置页可能在识别模型还没加载完时就被打开，所以这里允许各组件为空。
+    """
+
+    def __init__(self) -> None:
+        self.web = None
+        self.asr: AsrService | None = None
+        self.live: LiveState | None = None
+        self.waker = None
+        self.barge: object | None = None
+
+    def info(self) -> dict:
+        out: dict = {}
+        if self.asr is None:
+            out["asr"] = {"device": "未加载", "compute_type": "-", "model_size": "-"}
+        else:
+            out["asr"] = {
+                "device": self.asr.device,
+                "compute_type": self.asr.compute_type,
+                "model_size": self.asr.model_size,
+                "prompt_words": self.asr.prompt_words,
+            }
+        if self.live is not None:
+            out.update(self.live.snapshot())
+        if self.waker is not None:
+            out["wake"] = self.waker.info()
+        else:
+            out["wake"] = {"state": "off", "enabled": False, "phrase": config.WAKE_PHRASE}
+        out["barge"] = self.barge.info() if self.barge is not None else {"enabled": False}
+        return out
+
+    def reload_asr(self) -> dict:
+        if self.asr is None:
+            return {"ok": False, "error": "识别模型尚未加载完成，请稍后再试"}
+        return self.asr.reload()
+
+
+def trim_history(history: list[dict]) -> list[dict]:
+    keep = config.MAX_HISTORY_TURNS * 2
+    return [history[0]] + history[1:][-keep:]
+
+
+def sounds_like(text: str, other: str) -> bool:
+    """两段中文听着像不像同一句。各种回声判定都用它。"""
+    if not other:
+        return False
+    a = wake_mod.normalize(text)
+    b = wake_mod.normalize(other)
+    if len(a) < 4 or not b:
+        return False
+    return a in b or b in a
+
+
+def transcribe_interrupt(asr, pre, fresh, spoken, min_seconds: float = 0.3) -> str:
+    """打断后的识别：优先「播报里录到的那截 + 新录的」，听着像回声就退回新录的。
+
+    打断那一刻用户往往已经说了半句，只认新录的那段会丢掉开头；
+    但接上播报那截又可能把助手自己的话也录进来，所以做一次回声兜底。
+    """
+    floor = int(config.SAMPLE_RATE * min_seconds)
+    for audio in (bargein.join(pre, fresh), fresh):
+        if audio is None or len(audio) < floor:
+            continue
+        text = asr.transcribe(audio)
+        if text and not sounds_like(text, spoken):
+            return text
+    return ""
+
+
+def wait_speaking(speaker, timeout: float = 15.0) -> None:
+    """等这句播完。超时就强制放下 —— 合成卡住时不能陪着一起等。
+
+    播报队列是串行的，一句卡住后面全哑；用户感受到的是「助手没反应」，
+    而不是「合成超时」，所以这里必须主动收尾。
+    """
+    if speaker is None:
+        return
+    if not speaker.wait_done(timeout):
+        console.print("[yellow]（播报超时，强行放下）[/yellow]")
+        speaker.interrupt()
+
+
+def handle_persona_command(text: str, speaker, live: LiveState | None = None) -> str | None:
+    """「换成傲娇」这类换性格指令就地处理。
+
+    返回播报的那句话；None 表示不接管，照常走大模型。
+    不走大模型有两个原因：一是改人设本来就是查表，二是新性格要从**这一句**开始生效，
+    交给模型回答的话，回答本身还是旧性格的口吻。
+    """
+    target = persona.parse_switch(text)
+    if target is None:
+        return None
+
+    preset = persona.get(target)
+    console.print(f"[dim]性格指令：{preset['name']}[/dim]")
+    if live is not None:
+        live.update("thinking", heard=text, reply="", note=f"正在换成{preset['name']}…")
+    result = persona.apply(target, use_voice=getattr(config, "PERSONA_VOICE", True))
+    say = result["say"]
+    if live is not None:
+        live.update("speaking", reply=say)
+    if speaker is not None:
+        speaker.say(say)
+        wait_speaking(speaker)
+    if live is not None:
+        live.update("idle", reply=say, note="")
+    return say
+
+
+# 「打开 A 然后 B」这类复合指令不该被当成本机指令硬接
+_COMPLEX_WORDS = ("然后", "接着", "并且", "顺便", "之后", "以后", "帮我给", "帮我写",
+                  "搜索", "查一下", "发消息", "发个", "播放")
+
+
+def handle_app_command(text: str, speaker, live: LiveState | None = None) -> str | None:
+    """「打开微信」这类本机指令就地执行，不绕大模型。
+
+    返回要播报的那句话；返回 None 表示不接管，照常走大模型。
+    之所以不交给大模型：让它自己想办法启动程序既慢又危险，而这件事完全是查表。
+    """
+    if not getattr(config, "APPS_ENABLED", True):
+        return None
+    parsed = apps.parse_open(text)
+    if parsed is None:
+        return None
+    name, strong = parsed
+
+    # 「打开微信然后给张三发消息」会被正则囫囵吞成一个长名字，而包含匹配又能
+    # 命中里面的「微信」—— 那就变成「只说了一半就动手」。这种复合指令交回大模型。
+    if len(name) > 12 or any(w in name for w in _COMPLEX_WORDS):
+        return None
+
+    # 强意图才值得去翻商店应用清单（那要起一次 PowerShell）；弱意图先用本地索引快速判一下
+    entry = apps.find(name, deep=strong)
+    if entry is None and not strong:
+        return None       # 「开个玩笑」这类，交回大模型正常聊
+
+    console.print(f"[dim]本机指令：打开「{name}」[/dim]")
+    if live is not None:
+        live.update("thinking", heard=text, reply="", note=f"正在打开{name}…")
+        live.update("speaking", reply=f"打开了{name}。")
+    result = apps.open_app(name, entry)
+    say = result["say"]
+    if live is not None:
+        live.update("idle", reply=say, note="")
+    if speaker is not None:
+        speaker.say(say)
+        wait_speaking(speaker)
+    return say
+
+
+def reply_once(history: list[dict], speaker, hotkey=None, live: LiveState | None = None) -> str:
+    """跑一轮大模型，边流式打印边逐句播报。返回完整回复。"""
+    # 人设可能在会话中途被改（说了句「换成傲娇」），history[0] 是启动时那份，
+    # 每次开口前统一同步一次。内容没变时是同一个字符串，不影响 Ollama 的前缀缓存。
+    if history and history[0].get("role") == "system":
+        history[0]["content"] = persona.system_prompt()
+
+    splitter = None
+    if speaker is not None:
+        from tts import SentenceSplitter
+
+        splitter = SentenceSplitter()
+
+    pieces: list[str] = []
+    first_token_at: float | None = None
+    interrupted = False
+
+    # MCP 工具：模型自己要调外部能力时才有往返，没配服务器时这里就是空列表
+    hub = mcp_tools.hub() if getattr(config, "MCP_ENABLED", True) else None
+    tools: list[dict] = []
+    if hub is not None:
+        hub.ensure_started()
+        tools = hub.tool_specs()
+
+    def on_event(kind: str, info: dict) -> None:
+        if kind == "tool_start":
+            console.print(f"\n[dim]· 调用 {info.get('name')}[/dim]")
+            if live is not None:
+                live.update(note=f"正在用 {info.get('name')}…")
+        elif kind == "tool_end":
+            console.print(
+                f"[dim]· 返回 {info.get('chars')} 字"
+                f"（{info.get('ms', 0):.0f}ms）[/dim]"
+            )
+            if live is not None:
+                live.update(note="")
+        elif kind == "tools_unsupported":
+            console.print("[yellow]当前模型不支持工具调用，这轮按普通对话回答[/yellow]")
+
+    extra_context = ""
+    question = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            question = str(msg.get("content") or "")
+            break
+
+    if question:
+        need, why = search.should_search(question)
+        if need:
+            console.print(f"[dim]联网查询（{why}）…[/dim]")
+            if live is not None:
+                live.update(note="正在查资料…")
+            t_s = time.perf_counter()
+            result = search.web_search(question)
+            search_ms = (time.perf_counter() - t_s) * 1000
+            if result.get("ok"):
+                body = search.build_context(result)
+                if body:
+                    extra_context = (
+                        "下面是从网上搜到的资料，请只依据它回答，不要凭记忆补充或编造；"
+                        "资料和问题无关就直接说没查到。\n"
+                        "回答仍然要口语化：不要用 1. 2. 3. 编号或列表，最多挑三条连成一段话说。\n"
+                        + body
+                    )
+                console.print(
+                    f"[dim]查到 {len(result.get('results') or [])} 条"
+                    f"（{result.get('backend')} {search_ms:.0f}ms"
+                    f"{'，来自缓存' if result.get('cached') else ''}）[/dim]"
+                )
+            else:
+                console.print(f"[dim]没查成：{result.get('error')}[/dim]")
+            if live is not None:
+                live.update(note="")   # 回到默认的「在想…」
+
+    t0 = time.perf_counter()
+
+    for chunk in llm.stream_reply(
+        history,
+        extra_context=extra_context,
+        tools=tools,
+        on_tool=hub.call if hub is not None else None,
+        on_event=on_event if tools else None,
+    ):
+        if first_token_at is None:
+            first_token_at = time.perf_counter() - t0
+        pieces.append(chunk)
+        console.print(chunk, end="", style="bright_white")
+        if live is not None and len(pieces) % 4 == 0:
+            # 直接把已生成的内容喂给悬浮窗气泡，边想边显示
+            live.update("speaking" if speaker is not None else "thinking",
+                        reply="".join(pieces))
+        if splitter is not None:
+            for sent in splitter.feed(chunk):
+                speaker.say(sent)
+        if (hotkey is not None and hotkey.pressed.is_set()) or INTERRUPT.is_set():
+            console.print("\n[yellow]（已打断）[/yellow]")
+            if speaker is not None:
+                speaker.interrupt()
+            interrupted = True
+            break
+
+    # 被打断时绝不能把缓冲区里剩下的半句补播出来 —— 用户已经开口了，
+    # 再冒出一句「…以上就是全部内容」就是典型的「打断了还在说」
+    if splitter is not None and not interrupted:
+        for sent in splitter.flush():
+            speaker.say(sent)
+
+    reply = "".join(pieces).strip()
+    if live is not None:
+        live.update(reply=reply)
+
+    console.print()
+    if first_token_at is not None:
+        console.print(f"[dim]首字 {first_token_at * 1000:.0f} ms[/dim]")
+    return reply
+
+
+def record_utterance(rec, segmenter, no_speech_timeout: float = 8.0,
+                     max_seconds: float = 20.0) -> tuple[object, bool]:
+    """免按键录一句：等到静音就收工。
+
+    返回 (音频, 是否听到人声)。没人说话时不必干等到 max_seconds，
+    no_speech_timeout 到点就退出来，避免「点了悬浮窗却半天没反应」。
+    """
+    segmenter.reset()
+    rec.start()
+    # 必须从「当前」序号开始消费：电平缓冲留着最近 24 秒，从 0 开始会把
+    # 上一轮播报的电平重放一遍，断句器会在旧时间轴上立刻报一句「说完了」，
+    # 录音只剩几十毫秒，表现为「刚开麦就说没听到声音」。
+    cursor = rec.latest_seq()
+    spoke = False
+    t0 = time.perf_counter()
+    while not STOP.is_set():
+        # 「停下」是一次性的：只结束这一次录音，必须在这里消费掉。
+        # 留着不清，下一轮进来立刻又退出去，就会卡在「太短了，忽略」的空转里，
+        # 表现为「打断之后怎么说话都没反应」。
+        if INTERRUPT.is_set():
+            INTERRUPT.clear()
+            break
+        for seq, t, level in rec.levels_since(cursor):
+            cursor = seq
+            event = segmenter.feed(t, level)
+            if event is None:
+                continue
+            if event[0] == "start":
+                spoke = True
+            elif event[0] == "end":
+                return rec.stop(), True
+        elapsed = time.perf_counter() - t0
+        if not spoke and elapsed > no_speech_timeout:
+            break
+        if elapsed > max_seconds:
+            break
+        time.sleep(0.03)
+    return rec.stop(), spoke
+
+
+def preflight() -> None:
+    # 本地模型（Ollama）不自动拉起：它是用户自己的服务，可能正被别的程序用着，
+    # 也可能用户就是想关掉省显存。这里只做检查与提示，起停都交给用户
+    # （配置页「大模型服务」有「启动 / 停止本地模型」按钮）。
+    if config.LLM_PROVIDER == "ollama":
+        try:
+            models = llm.list_ollama_models(timeout=2.0)
+        except llm.LLMError:
+            console.print(
+                "[yellow]本地模型没在运行[/yellow] "
+                "[dim]（不会自动启动它：在配置页「大模型服务」点「启动本地模型」，"
+                "或自己打开 Ollama；也可以换成网络接口）[/dim]"
+            )
+        else:
+            if config.LLM_MODEL in models:
+                console.print(f"[dim]本地模型就绪：{config.LLM_MODEL}[/dim]")
+            else:
+                console.print(
+                    f"[yellow]本机没有模型 {config.LLM_MODEL}[/yellow] "
+                    f"[dim]已安装：{'、'.join(models[:6]) or '无'}；可执行 ollama pull {config.LLM_MODEL}[/dim]"
+                )
+    else:
+        llm.ensure_model()
+    # MCP 服务器在后台连，冷启动时 npx 可能要下包，不能让它挡住开机
+    if getattr(config, "MCP_ENABLED", True):
+        hub = mcp_tools.hub()
+        hub.ensure_started()
+        names = [s["name"] for s in mcp_tools.load_servers() if s.get("enabled", True)]
+        if names:
+            console.print(f"[dim]MCP 工具后台连接中：{'、'.join(names)}[/dim]")
+    try:
+        import sounddevice as sd
+
+        dev = sd.query_devices(kind="input")
+        console.print(f"[dim]麦克风：{dev['name']}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]麦克风不可用：{exc}[/red]")
+        raise SystemExit(1)
+
+
+def write_pid() -> None:
+    """记下自己的进程号，方便 stop.py 精确找到本程序。"""
+    try:
+        PID_FILE.parent.mkdir(exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def clear_pid() -> None:
+    try:
+        PID_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def already_running() -> bool:
+    """已经有一个助手进程在跑就直接退出，避免两个进程抢麦克风。
+
+    判定靠互斥量：pid 文件里的号码可能被别的进程复用（助手被强杀时来不及删），
+    光看「那个号还活着」会得出错误结论，出现过桌面形象因此起不来的情况。
+    pid 文件只用来显示是哪个进程。
+
+    用 pythonw 启动时看不到控制台，所以顺手把已有的配置页打开，
+    让用户知道程序其实在运行。
+    """
+    if single_instance.acquire("VoiceAssistantMain"):
+        return False
+    try:
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        pid = 0
+    console.print(f"[yellow]助手已经在运行（PID {pid}），本次退出[/yellow]")
+    try:
+        import json
+
+        info = json.loads((RUNTIME_DIR / "server.json").read_text(encoding="utf-8"))
+        url = info.get("url")
+        if url:
+            import webbrowser
+
+            console.print(f"[dim]配置页：{url}[/dim]")
+            webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _service_summary() -> str:
+    """启动横幅里的一行服务摘要。"""
+    if config.LLM_PROVIDER == "openai":
+        model = f"网络 {config.OPENAI_MODEL}"
+    else:
+        model = f"本地 {config.LLM_MODEL}"
+    tts_name = "离线系统语音" if config.TTS_ENGINE == "sapi" else "在线 edge-tts"
+    asr_name = "网络识别" if config.ASR_PROVIDER == "openai" else f"whisper {config.WHISPER_MODEL}"
+    return f"模型 {model} · 识别 {asr_name} · 合成 {tts_name}"
+
+
+def start_web(bridge: RuntimeBridge, port: int | None, on_trigger=None, on_quit=None,
+              on_config_changed=None):
+    """起配置页服务。失败不致命 —— 语音功能照常可用。"""
+    try:
+        from webserver import ConfigServer
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]配置页模块加载失败：{exc}[/red]")
+        return None
+
+    server = ConfigServer(
+        port=port,
+        on_asr_reload=bridge.reload_asr,
+        get_runtime=bridge.info,
+        on_trigger=on_trigger,
+        on_quit=on_quit,
+        on_config_changed=on_config_changed,
+    )
+    try:
+        server.start()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]配置页启动失败：{exc}[/red]")
+        return None
+    return server
+
+
+def wait_forever(web) -> None:
+    try:
+        while not STOP.is_set():
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        console.print("\n[dim]再见[/dim]")
+    finally:
+        if web is not None:
+            web.stop()
+
+
+def wait_for_trigger(hotkey, bus: TriggerBus):
+    """等任意一种触发。返回 (类型, 文本, 听到的原话)，退出时返回 None。"""
+    while not STOP.is_set():
+        if hotkey is not None and hotkey.pressed.is_set():
+            return (TriggerBus.PTT, "", "")
+        item = bus.get()
+        if item is not None:
+            return item
+        time.sleep(0.03)
+    return None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--text", help="跳过录音，直接用它当用户输入")
+    parser.add_argument("--no-audio", action="store_true", help="不播报")
+    parser.add_argument("--no-web", action="store_true", help="不启动配置页服务")
+    parser.add_argument("--port", type=int, help="配置页端口，默认用 config.WEB_PORT")
+    parser.add_argument("--no-browser", action="store_true", help="起服务但不自动开浏览器")
+    parser.add_argument("--config", action="store_true", help="只开配置页，不加载语音链路")
+    parser.add_argument("--no-wake", action="store_true", help="不监听唤醒词，只支持按住空格")
+    args = parser.parse_args()
+
+    if already_running():
+        return
+
+    write_pid()
+    atexit.register(clear_pid)
+
+    console.print(
+        Panel.fit(
+            "[bold]本地语音助手[/bold]\n" + _service_summary(),
+            border_style="cyan",
+        )
+    )
+
+    live = LiveState()
+    bridge = RuntimeBridge()
+    bridge.live = live
+    bus = TriggerBus()
+
+    # 唤醒线程要在配置页启动之前就先占好名字：配置页可能比模型先就绪
+    waker = None
+
+    def on_pet_trigger() -> dict:
+        """桌面悬浮窗被点击，按当前状态理解为不同的意思。
+
+        空闲 → 开一轮录音；正在说话 → 打断并开一轮录音；
+        正在录音 → 当成「我说完了」，让它立刻开始识别。
+        这里不能无脑置 INTERRUPT：空闲时置位会让录音循环立刻退出。
+        """
+        status = live.status
+        if status == "listening":
+            INTERRUPT.set()
+        else:
+            if status != "idle":
+                INTERRUPT.set()
+            bus.push(TriggerBus.LISTEN)
+        return {"ok": True}
+
+    def on_quit() -> dict:
+        STOP.set()
+        return {"ok": True}
+
+    def on_config_changed(changed: list[str]) -> dict | None:
+        """配置页保存后回调，把开关立刻落到正在跑的线程上。
+
+        没有它的话，页面打开唤醒开关要等到「下一轮对话结束」才生效 ——
+        而用户正是在空闲时才去改这个设置，等于永远不生效。
+        """
+        if {"MCP_ENABLED", "MCP_MAX_TOOLS"} & set(changed):
+            # 关掉时要真的把子进程收掉，否则工具服务器还在后台跑；
+            # 打开或改预算就全量重连（ensure_started 只管首次启动，收了进程再叫它没用）
+            hub = mcp_tools.hub()
+            if not config.MCP_ENABLED:
+                hub.stop_all()
+            else:
+                threading.Thread(target=hub.reload, name="mcp-reload", daemon=True).start()
+        if waker is None:
+            return {"state": "off", "enabled": False, "detail": "本次启动没加载唤醒线程"}
+        if not config.WAKE_ENABLED or not config.WAKE_PHRASE.strip():
+            waker.disable()
+        elif live.status == "idle":
+            # 说话当中不能开麦，否则自己的声音会把话筒塞满
+            waker.enable()
+        return waker.info()
+
+    if not args.no_web:
+        live.boot(1, BOOT_STEPS, "启动配置页")
+        web = start_web(bridge, args.port, on_pet_trigger, on_quit, on_config_changed)
+        if web is not None:
+            bridge.web = web
+            console.print(
+                f"[cyan]配置页[/cyan] {web.url}  "
+                "[dim]（浏览器里切换服务、试听音色、改唤醒词，改完即刻生效）[/dim]"
+            )
+            # 纯文本模式通常是被脚本调用的，不打扰用户桌面；
+            # --config 模式的唯一目的就是开这个页面，不吃 WEB_OPEN_BROWSER 的默认关
+            if args.config or (config.WEB_OPEN_BROWSER
+                               and not args.no_browser and not args.text):
+                web.open_browser()
+
+    if args.config:
+        if web is None:
+            console.print("[red]配置页没能启动，无法进入仅配置模式[/red]")
+            return
+        # 仅配置模式下也要连一次 MCP，否则页面上永远显示「未连接」
+        if getattr(config, "MCP_ENABLED", True):
+            mcp_tools.hub().ensure_started()
+        live.boot(BOOT_STEPS, BOOT_STEPS)
+        console.print("[dim]仅配置模式：只提供网页配置，不占麦克风、不加载模型。Ctrl+C 退出[/dim]")
+        wait_forever(web)
+        return
+
+    live.boot(2, BOOT_STEPS, "检查运行环境", "拉起模型服务与音频设备")
+    preflight()
+
+    from audio_io import Player, Recorder
+    from tts import Speaker
+
+    speaker = None
+    if not args.no_audio:
+        live.boot(3, BOOT_STEPS, "准备语音合成")
+        speaker = Speaker(Player())
+        speaker.warmup()
+        console.print("[dim]语音合成就绪[/dim]")
+
+    history = [{"role": "system", "content": persona.system_prompt()}]
+
+    # 纯文本模式：验证「大模型 + 播报」这一段
+    if args.text:
+        live.boot(BOOT_STEPS, BOOT_STEPS)
+        console.print(f"[cyan]你（文本）：[/cyan]{args.text}")
+        live.update("thinking", heard=args.text)
+        console.print("[green]助手：[/green]", end="")
+        app_say = handle_persona_command(args.text, speaker, live)
+        if app_say is None:
+            app_say = handle_app_command(args.text, speaker, live)
+        if app_say is not None:
+            console.print(app_say)
+        else:
+            history.append({"role": "user", "content": args.text})
+            reply_once(history, speaker, live=live)
+        if speaker is not None:
+            wait_speaking(speaker)
+        return
+
+    live.boot(4, BOOT_STEPS, "加载识别模型", _asr_size_hint())
+    console.print(f"[dim]加载识别服务（{_asr_size_hint() or '本机已有模型'}）…[/dim]")
+    try:
+        asr = AsrService()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]识别服务初始化失败：{exc}[/red]")
+        live.boot(BOOT_STEPS, BOOT_STEPS)
+        if web is not None:
+            console.print(f"[dim]可以打开 {web.url} 改配置，或 Ctrl+C 退出[/dim]")
+            wait_forever(web)
+        return
+    bridge.asr = asr
+    console.print(f"[dim]识别就绪：{asr.device} / {asr.compute_type}[/dim]")
+
+    rec = Recorder()
+    hotkey = SpaceHotkey()
+    hotkey.start()
+
+    import vad
+    from wake import Waker, peak_of as wake_peak
+
+    segmenter = vad.Segmenter(config.WAKE_SENSITIVITY, config.WAKE_SILENCE)
+
+    # 播报期间盯麦克风：听到开口就停，不等它把话说完
+    barge: bargein.BargeIn | None = None
+    if speaker is not None:
+        def on_barge_hit() -> None:
+            speaker.interrupt()   # 停播报、清掉还没念的句子
+            INTERRUPT.set()       # 让还在生成的流式循环一起收手
+
+        barge = bargein.BargeIn(rec, speaker, on_barge_hit)
+        bridge.barge = barge
+        barge.start()
+
+    def on_wake(rest: str, heard: str, asr_ms: float) -> None:
+        """唤醒词命中。提示词后面如果跟了内容，就当成一句话直接处理。"""
+        console.print(f"[magenta]唤醒：[/magenta]{heard}  [dim]({asr_ms:.0f}ms)[/dim]")
+        if len(rest) >= 2:
+            bus.push(TriggerBus.QUERY, text=rest, heard=heard)
+        else:
+            bus.push(TriggerBus.LISTEN, heard=heard)
+
+    # 线程常驻，开关交给配置（enable() 自己会看 WAKE_ENABLED），
+    # 这样在配置页里随时开关都不需要重启；--no-wake 才是真的不加载
+    if not args.no_wake:
+        live.boot(5, BOOT_STEPS, "启动唤醒监听")
+        waker = Waker(rec, asr, segmenter, on_wake)
+        bridge.waker = waker
+        waker.start()
+        if config.WAKE_ENABLED:
+            console.print(f"[dim]唤醒词已就绪：说「{config.WAKE_PHRASE}」[/dim]")
+        else:
+            console.print("[dim]唤醒监听当前是关的，可在配置页打开[/dim]")
+
+    live.boot(BOOT_STEPS, BOOT_STEPS)
+    tips = "按住 [bold]空格[/bold] 或说[bold]唤醒词[/bold]，也可以点桌面上的形象"
+    console.print(f"\n[bold green]就绪[/bold green]  {tips}，[bold]Ctrl+C[/bold] 退出\n")
+
+    # 会话保持：唤醒后 session_until 之前都不用再喊提示词，超时自动转休眠
+    session_until = 0.0
+    last_reply = ""
+    # 被打断后带过来的东西：(打断前录到的音频, 当时正在说的话)
+    pending: tuple[object, str] | None = None
+
+    def wake_ready() -> bool:
+        return waker is not None and config.WAKE_ENABLED
+
+    def sounds_like_last_reply(text: str) -> bool:
+        """会话模式的自激保护：听到的内容就是自己刚说的话，当作回声丢掉。
+
+        理论和实测都该由「播完再开麦」挡住，但外放音量、蓝牙延迟都可能漏一点进来；
+        漏进来的后果是它对着自己的回答一路追问下去，所以再兜一层。
+        """
+        if not last_reply:
+            return False
+        return sounds_like(text, last_reply)
+
+    try:
+        while not STOP.is_set():
+            in_session = (
+                wake_ready()
+                and config.WAKE_SESSION_SECONDS > 0
+                and time.monotonic() < session_until
+            )
+            if in_session:
+                # 会话中：话筒一直开着，接着说就行
+                live.update("listening", session_until=session_until)
+                item = (
+                    (TriggerBus.PTT, "", "")
+                    if hotkey.pressed.is_set()
+                    else (TriggerBus.LISTEN, "", "")
+                )
+            else:
+                session_until = 0.0
+                # 没开唤醒词就没有「休眠」这回事，只是空闲
+                live.update("sleeping" if wake_ready() else "idle", session_until=0.0)
+                if barge is not None:
+                    barge.disarm()      # 环形缓冲交还给唤醒线程
+                if waker is not None:
+                    waker.enable()
+                item = wait_for_trigger(hotkey, bus)
+                if item is None:
+                    break
+            if waker is not None:
+                waker.disable()
+            if barge is not None:
+                barge.arm()
+            INTERRUPT.clear()
+
+            kind, text, heard = item
+            if speaker is not None:
+                speaker.interrupt()
+
+            # ---------- 拿到用户说的话 ----------
+            asr_ms = 0.0
+            if kind == TriggerBus.QUERY:
+                user_text = text
+                if heard:
+                    console.print(f"[cyan]你：[/cyan]{user_text}  [dim](唤醒词带出)[/dim]")
+            else:
+                live.update("listening")
+                if kind == TriggerBus.PTT:
+                    rec.start()
+                    console.print("[red]● 录音中…[/red]", end="\r")
+                    t_start = time.perf_counter()
+                    while hotkey.pressed.is_set() and time.perf_counter() - t_start < config.MAX_RECORD_SECONDS:
+                        if INTERRUPT.is_set():   # 点桌面形象「停下」也能结束按压录音
+                            INTERRUPT.clear()
+                            break
+                        time.sleep(0.02)
+                    audio = rec.stop()
+                    # 超过最长时长被截断时用户手可能还按着，先等松手，否则下一轮会立刻又触发
+                    if hotkey.pressed.is_set():
+                        hotkey.wait_release()
+                    spoke = True
+                else:
+                    console.print("[red]● 录音中…[/red]", end="\r")
+                    echo_text = ""
+                    if in_session:
+                        # 会话模式：话筒一直开着，等到你说完、或者会话到期为止
+                        if speaker is not None:
+                            speaker.wait_done(5.0)  # 播报真的放完了才开麦
+                        time.sleep(0.2)             # 让尾音散掉，别被自己的回声触发
+                        no_speech = max(1.0, session_until - time.monotonic())
+                    else:
+                        no_speech = 8.0
+                    audio, spoke = record_utterance(
+                        rec, segmenter,
+                        no_speech_timeout=no_speech,
+                        max_seconds=min(config.MAX_RECORD_SECONDS, 25),
+                    )
+                fresh_audio = audio
+                if pending is not None:
+                    # 打断时用户已经开口了，头几个字是在播报里说的，
+                    # 先记下来，识别时再决定要不要接上（见 transcribe_interrupt）
+                    pre_audio, echo_text = pending
+                    pending = None
+                    audio = bargein.join(pre_audio, audio)
+                    spoke = True
+                duration = len(audio) / config.SAMPLE_RATE
+                console.print(" " * 20, end="\r")
+
+                if not spoke:
+                    if in_session:
+                        session_until = 0.0
+                        console.print("[dim]好一会儿没说话，转回休眠（可以再喊一次提示词）[/dim]")
+                    else:
+                        console.print("[dim]没听到声音[/dim]")
+                    continue
+                if duration < config.MIN_RECORD_SECONDS:
+                    # 咳嗽、键盘、上一句播报的尾音都算这类，不能因为它把会话掐掉
+                    console.print("[dim]太短了，忽略[/dim]")
+                    continue
+                # 断句阈值是自适应的，静音段也会被切出来；whisper 在这种段上会编句子，
+                # 连续对话模式下表现为「没人说话它却一直答」。这里用绝对下限再挡一次。
+                peak = wake_peak(audio)
+                if peak < wake_mod.ANSWER_PEAK:
+                    console.print(f"[dim]声音太轻（峰值 {peak:.4f}），忽略[/dim]")
+                    continue
+
+                t_asr = time.perf_counter()
+                try:
+                    if echo_text:
+                        user_text = transcribe_interrupt(asr, pre_audio, fresh_audio, echo_text)
+                    else:
+                        user_text = asr.transcribe(audio)
+                except Exception as exc:  # noqa: BLE001
+                    # 识别服务挂了也要活下去；错误只写控制台，不念出来
+                    console.print(f"[red]识别失败：{type(exc).__name__}: {exc}[/red]")
+                    live.update("idle", reply="")
+                    continue
+                asr_ms = (time.perf_counter() - t_asr) * 1000
+                if not user_text:
+                    console.print("[dim]没听清，再说一次[/dim]")
+                    continue
+                if in_session and sounds_like_last_reply(user_text):
+                    console.print("[dim]这像是自己刚说的，忽略[/dim]")
+                    continue
+                console.print(f"[cyan]你：[/cyan]{user_text}  [dim]({asr_ms:.0f}ms)[/dim]")
+
+            # ---------- 回答 ----------
+            live.update("thinking", heard=user_text, reply="", asr_ms=asr_ms)
+            console.print("[green]助手：[/green]", end="")
+
+            INTERRUPT.clear()  # 录音期间点的「停下」不该把回答也掐掉
+
+            # 先看是不是「打开某应用」「换成傲娇」这类本机指令：查表就能办的事不必惊动大模型
+            app_say = None
+            try:
+                app_say = handle_persona_command(user_text, speaker, live)
+                if app_say is None:
+                    app_say = handle_app_command(user_text, speaker, live)
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]本机指令出错：{type(exc).__name__}: {exc}[/red]")
+            if app_say is not None:
+                console.print(app_say)
+                history.append({"role": "user", "content": user_text})
+                history.append({"role": "assistant", "content": app_say})
+                history = trim_history(history)
+                last_reply = app_say
+            else:
+                history.append({"role": "user", "content": user_text})
+                try:
+                    reply = reply_once(history, speaker, hotkey, live)
+                except Exception as exc:  # noqa: BLE001
+                    # 模型服务挂了、断网了，这一轮认栽，但整个助手不能跟着退出。
+                    # 错误只打控制台：技术细节念出来对用户毫无意义，还很吓人。
+                    reply = ""
+                    console.print(
+                        f"\n[red]这一轮没答上来：{type(exc).__name__}: {exc}[/red]"
+                    )
+                    live.update("idle", reply="", note="")
+                    history.pop()          # 没答上的这轮不留在上下文里
+                if reply:
+                    history.append({"role": "assistant", "content": reply})
+                    history = trim_history(history)
+                    last_reply = reply
+
+            wait_speaking(speaker)
+            if barge is not None:
+                pre_audio, spoken = barge.take()
+                if len(pre_audio):
+                    # 打断是「我们」触发的，不能让它把下一轮录音也掐掉
+                    INTERRUPT.clear()
+                    console.print("[yellow]（你打断了，我听着）[/yellow]")
+                    pending = (pre_audio, spoken)
+                    if not in_session:
+                        bus.push(TriggerBus.LISTEN, heard="")
+            # 一轮回答结束：处于唤醒状态就再挂一段「会话」，让用户可以直接追问
+            if wake_ready() and config.WAKE_SESSION_SECONDS > 0:
+                session_until = time.monotonic() + config.WAKE_SESSION_SECONDS
+            else:
+                session_until = 0.0
+            # 只切状态，保留 heard / reply：气泡在 idle 时本来就是空的，
+            # 但配置页和悬浮窗还能看到「上一轮说了什么」，排查问题时很有用
+            live.update("idle", session_until=session_until)
+    except KeyboardInterrupt:
+        console.print("\n[dim]再见[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        # 兜底：没预料到的异常也不该让进程静悄悄消失。start.vbs 是无窗口启动，
+        # 用户那边看不到控制台，只会觉得「助手突然死了、怎么叫都没反应」。
+        console.print(f"[red]主循环异常退出：{type(exc).__name__}: {exc}[/red]")
+    finally:
+        STOP.set()
+        if waker is not None:
+            waker.stop()
+        if barge is not None:
+            barge.stop()
+        hotkey.stop()
+        rec.close()
+        if speaker is not None:
+            speaker.interrupt()
+        if web is not None:
+            web.stop()
+
+
+if __name__ == "__main__":
+    main()
